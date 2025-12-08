@@ -1,0 +1,37 @@
+# Python-Cache
+__pycache__/
+*.pyc
+
+# Virtual Envs
+project/
+venv/
+.env/
+
+# WSL / System
+*.swp
+*.swo
+
+# ROMs & Emulator-Dateien
+*.nes
+*.sfc
+*.smc
+*.bin
+*.md
+*.rom
+*.state
+*.sav
+roms/
+stable-retro/
+stable-retro/retro/data/stable/*/rom.*
+stable-retro/retro/data/stable/*/*.bk2
+stable-retro/retro/data/stable/*/savestates/
+
+# Modelle / Checkpoints
+*.zip
+*.pth
+*.pkl
+
+# Logs / TensorBoard
+logs_ppo/
+tensorboard/
+logs/
