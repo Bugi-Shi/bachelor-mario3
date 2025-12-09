@@ -38,9 +38,15 @@ source project/bin/activate
 ### 5. ROM hinzufügen und umwandeln (manuell)
 rom.nes -> stable-retro/retro/data/stable/SuperMarioBros3-Nes-v0 verschieben
 
-Darauf achten denselben key wie in rom.sha zu haben
+cat rom.sha
+sha1sum rom.nes
 
-### 6. Projektstruktur
+-> müssen gleich sein
+
+### 6. Projekt starten
+python main.py
+
+### 7. Projektstruktur
 bachelor/
 │── stable-retro/        # Emulator backend (lokaler Checkout)
 │── project/             # Python virtual environment
