@@ -11,6 +11,7 @@ echo ">>> pip aktualisieren..."
 pip install --upgrade pip
 
 echo ">>> Dependencies installieren..."
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
 echo ">>> Fertig!"

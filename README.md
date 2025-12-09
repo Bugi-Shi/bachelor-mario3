@@ -6,6 +6,8 @@ Dieses Projekt nutzt **stable-retro** und verschiedene RL-Algorithmen, um SuperM
 
 ## Setup (WSL2 Ubuntu 22.04)
 
+wsl --install -d Ubuntu-22.04
+
 ### 1. Systempakete installieren
 
 sudo apt update
@@ -40,11 +42,14 @@ Darauf achten denselben key wie in rom.sha zu haben
 
 ### 6. Projektstruktur
 bachelor/
-│── stable-retro/        # Emulator backend
+│── stable-retro/        # Emulator backend (lokaler Checkout)
 │── project/             # Python virtual environment
-│── src/                 # Trainings-Skripte PPO / NEAT sowie Extras
+│── src/                 # Trainings-Skripte (PPO / NEAT) und Hilfs-Skripte
+│── .vscode/             # VS Code workspace settings & extension recommendations
 │── main.py              # Einstiegspunkt
 │── jump_test.py         # Beispielmodul für Mario-Test
-│── setup.sh             # Automatisches Installationsskript
-│── requirements.txt     # Python-Dependencies
+│── setup.sh             # Automatisches Installationsskript (venv + Abhängigkeiten)
+│── requirements.txt     # Laufzeit-Dependencies
+│── requirements-dev.txt # Developer-Tools: black, isort, ruff
+│── .ruff.toml           # Ruff-Konfiguration (Formatierung/Linting)
 └── README.md
