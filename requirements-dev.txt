@@ -1,0 +1,11 @@
+-e stable-retro
+stable-baselines3[extra]
+gymnasium
+neat-python
+pygame
+torchsummary
+opencv-python
+timm
+black
+isort
+ruff

@@ -1,0 +1,6 @@
+[tool.ruff]
+line-length = 88
+extend-ignore = ["E203", "W503"]
+
+# Enable some automatic fixes; ruff --fix will apply these where possible.
+fix = true

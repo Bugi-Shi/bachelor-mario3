@@ -1,13 +1,14 @@
 import retro
 import time
 
+
 def test_jump(steps=200, sleep=0.02):
     """
     Lässt Mario im SuperMarioBros3-Nes-v0 Environment springen.
     steps: Wie viele Schritte ausgeführt werden sollen.
     sleep: Wartezeit zwischen Frames (für Sichtbarkeit).
     """
-    
+
     env = retro.make("SuperMarioBros3-Nes-v0")
     obs, info = env.reset()
 
@@ -28,7 +29,6 @@ def test_jump(steps=200, sleep=0.02):
         if terminated or truncated:
             print("Level neu gestartet.")
             obs, info = env.reset()
-
         time.sleep(sleep)
 
     env.close()

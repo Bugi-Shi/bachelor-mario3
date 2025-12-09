@@ -1,0 +1,29 @@
+{
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit",
+        "source.fixAll": "explicit"
+    },
+    "files.trimTrailingWhitespace": true,
+    "files.trimFinalNewlines": true,
+    "files.insertFinalNewline": true,
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "88"
+    ],
+    "python.linting.enabled": true,
+    "python.linting.ruffEnabled": true,
+    "python.linting.ruffPath": "/home/bugi/bachelor/project/bin/ruff",
+    "python.linting.pylintEnabled": false,
+    "python.analysis.typeCheckingMode": "basic",
+    "python.defaultInterpreterPath": "/home/bugi/bachelor/project/bin/python",
+    "python.analysis.extraPaths": [
+        "./project/lib/python3.10/site-packages",
+        "./stable-retro",
+        "./stable-retro/retro"
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.python"
+    }
+}
