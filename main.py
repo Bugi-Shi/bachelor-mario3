@@ -1,46 +1,44 @@
-from ppo import train_ppo
 import argparse
 
-'''
-- Main.py -
-- Entry point for training PPO on SuperMarioBros3-Nes environment.
 
-python main.py --start # Start the training process
-python main.py         # Also starts the training process
-python main.py --load  # Load a previously saved model and continue training
-'''
-
-
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="SuperMarioBros3-Nes PPO Training Script",
+        description="SuperMarioBros3 PPO: train or plot death overlay",
     )
-    parser.add_argument(
-        "--start",
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--train",
         action="store_true",
-        help="Start the training process",
+        help="Run PPO training (calls train_ppo())",
     )
-    parser.add_argument(
-        "--load",
+    group.add_argument(
+        "--death",
         action="store_true",
-        help="Load a previously saved model and continue training",
+        help="Generate deaths overlay image from outputs/deaths/*.jsonl",
     )
     args = parser.parse_args()
 
-    if args.start:
+    if args.train:
+        from ppo import train_ppo
+
         print("Starte Mario PPO Training aus main.py ...")
         train_ppo()
         return
-    elif args.load:
-        print(
-            "Lade ein zuvor gespeichertes Modell "
-            "und setze das Training fort ..."
-        )
-        path = "ppo_super_mario_bros3"
-        train_ppo(path)
-        return
 
-    parser.print_help()
+    if args.death:
+        from utils.plot_deaths_overlay_all import render_deaths_overlay_all
+
+        try:
+            out = render_deaths_overlay_all()
+        except FileNotFoundError as e:
+            print(e)
+            print(
+                "No deaths logs found yet. Run `python main.py --train` "
+                "to generate outputs/deaths/*.jsonl first."
+            )
+            return
+        print(f"Wrote: {out}")
+        return
 
 
 if __name__ == "__main__":
