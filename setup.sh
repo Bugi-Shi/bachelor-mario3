@@ -1,18 +1,59 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-echo ">>> Virtuelle Umgebung wird erstellt..."
-python3 -m venv project
+# Bootstrap script for this repo.
+# Goal: after `git pull` and installing Python 3.8, run `./setup.sh` and you're ready.
 
-echo ">>> Aktivieren..."
-source project/bin/activate
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
 
-echo ">>> pip aktualisieren..."
-pip install --upgrade pip
+VENV_DIR="${VENV_DIR:-project}"
+PYTHON_BIN="${PYTHON_BIN:-python3.8}"
 
-echo ">>> Dependencies installieren..."
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+	echo "ERROR: '$PYTHON_BIN' not found." >&2
+	echo "Install Python 3.8 first, then re-run: ./setup.sh" >&2
+	echo "Tip (Ubuntu/Debian): sudo apt-get install python3.8 python3.8-venv" >&2
+	exit 1
+fi
 
-echo ">>> Fertig!"
-echo "Aktivieren mit: source project/bin/activate"
+echo ">>> Using Python: $($PYTHON_BIN --version 2>&1)"
+
+# Ensure venv module exists
+if ! "$PYTHON_BIN" -c "import venv" >/dev/null 2>&1; then
+	echo "ERROR: Python venv module not available for '$PYTHON_BIN'." >&2
+	echo "On Ubuntu/Debian, install: sudo apt-get install python3.8-venv" >&2
+	exit 1
+fi
+
+if [[ ! -d "$VENV_DIR" || ! -x "$VENV_DIR/bin/python" ]]; then
+	echo ">>> Creating virtual environment in: $VENV_DIR"
+	"$PYTHON_BIN" -m venv "$VENV_DIR"
+else
+	echo ">>> Reusing existing virtual environment: $VENV_DIR"
+fi
+
+VENV_PY="$ROOT_DIR/$VENV_DIR/bin/python"
+
+echo ">>> Upgrading pip"
+"$VENV_PY" -m pip install --upgrade pip
+
+REQ_LOCK_FILE="${REQ_LOCK_FILE:-requirements-lock.txt}"
+REQ_DEV_FILE="${REQ_DEV_FILE:-requirements-dev.txt}"
+
+if [[ -f "$REQ_LOCK_FILE" ]]; then
+	echo ">>> Installing dependencies ($REQ_LOCK_FILE)"
+	"$VENV_PY" -m pip install -r "$REQ_LOCK_FILE"
+else
+	echo "ERROR: $REQ_LOCK_FILE not found in repo root." >&2
+	echo "If your file has a different name, run e.g.:" >&2
+	echo "  REQ_LOCK_FILE=<yourfile>.txt ./setup.sh" >&2
+	exit 1
+fi
+
+if [[ -f "$REQ_DEV_FILE" ]]; then
+	echo ">>> Installing dev dependencies ($REQ_DEV_FILE)"
+	"$VENV_PY" -m pip install -r "$REQ_DEV_FILE"
+fi
+
+echo ">>> Done. Activate with: source $VENV_DIR/bin/activate"

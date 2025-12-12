@@ -9,10 +9,6 @@
     "variables": {
       "lives": {
         "op": "negative"
-      },
-      "score": {
-        "op": "greater-than",
-        "reference": 5000
       }
     }
   },
