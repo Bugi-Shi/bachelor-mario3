@@ -12,9 +12,6 @@ fsspec==2025.3.0
 google-auth==2.43.0
 google-auth-oauthlib==1.0.0
 grpcio==1.70.0
-gym==0.26.2
-gym-notices==0.1.0
-gym-retro==0.8.0
 gymnasium==1.0.0
 idna==3.11
 importlib_metadata==8.5.0
