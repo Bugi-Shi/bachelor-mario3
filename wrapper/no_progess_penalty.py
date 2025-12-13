@@ -1,4 +1,3 @@
-
 import gymnasium as gym
 import numpy as np
 
@@ -39,16 +38,20 @@ class NoHposProgressGuardWrapper(gym.Wrapper):
         self._no_progress_steps = 0
         return self.env.reset(**kwargs)
 
+    @staticmethod
+    def _to_int(value) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(np.asarray(value).item())
+
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         cur = info.get("hpos")
         if cur is None:
             return obs, reward, terminated, truncated, info
 
-        try:
-            cur_hpos = int(cur)
-        except Exception:
-            cur_hpos = int(np.asarray(cur).item())
+        cur_hpos = self._to_int(cur)
 
         if self._prev_hpos is None:
             self._prev_hpos = cur_hpos

@@ -1,10 +1,18 @@
+from typing import Any
+
 import gymnasium as gym
 import numpy as np
-from typing import Any
 import retro.data as retro_data
 
 
 class ResetToDefaultStateByDeathWrapper(gym.Wrapper):
+    @staticmethod
+    def _to_int(value) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(np.asarray(value).item())
+
     def __init__(
         self,
         env: gym.Env,
@@ -36,10 +44,7 @@ class ResetToDefaultStateByDeathWrapper(gym.Wrapper):
 
         cur_lives = info.get(self.lives_key)
         if cur_lives is not None:
-            try:
-                cur_lives_int = int(cur_lives)
-            except Exception:
-                cur_lives_int = int(np.asarray(cur_lives).item())
+            cur_lives_int = self._to_int(cur_lives)
 
             if (
                 self._prev_lives is not None

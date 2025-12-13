@@ -10,8 +10,16 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
     """Logs (approx) death positions as JSONL.
 
     Logging happens on steps that end an episode where either:
-    - info['life_lost_terminated'] is True
+    - info['life_lost_terminated'] is True (or lives dropped)
     - info['no_hpos_progress_terminated'] is True (optional, still logged)
+
+    Output schema (one JSON object per death):
+    - reason: "life_lost" | "stuck"
+    - x: global x (screen_idx * screen_width + hpos)
+    - hpos: local hpos in current screen
+    - live_lost: bool
+    - stuck_lost: bool
+    - screen_idx: int
 
     Because SMB3 hpos in this integration is currently a single byte, it can
     "wrap" back to 0. We track a screen index and compute a global x as:
@@ -110,6 +118,16 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
 
         self._maybe_advance_screen(cur_hpos, ended=ended)
 
+        # Expose derived position info to
+        # downstream consumers (callbacks, etc.)
+        # Keep this lightweight; only add keys when we have a valid hpos.
+        if cur_hpos is not None:
+            info = dict(info)
+            info["screen_idx"] = int(self._screen_idx)
+            info["x"] = int(
+                self._screen_idx * self.screen_width + int(cur_hpos)
+            )
+
         # Track last meaningful position BEFORE terminal frames.
         # On life loss the last frame often has hpos=0 (respawn), which we
         # don't want to overwrite.
@@ -144,15 +162,15 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
                 logged_hpos = 0
                 global_x = 0
 
-            hpos_raw = None if cur_hpos is None else int(cur_hpos)
+            live_lost = bool(reason == "life_lost")
+            stuck_lost = bool(reason == "stuck")
             self._write(
                 {
                     "reason": reason,
                     "x": int(global_x),
-                    "y": None,
                     "hpos": int(logged_hpos) if logged_hpos is not None else 0,
-                    "lives": None if cur_lives is None else int(cur_lives),
-                    "hpos_raw": hpos_raw,
+                    "live_lost": live_lost,
+                    "stuck_lost": stuck_lost,
                     "screen_idx": int(self._screen_idx),
                 }
             )

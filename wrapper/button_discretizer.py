@@ -11,38 +11,44 @@ class ButtonDiscretizerWrapper(gym.ActionWrapper):
     ['B', 'NULL', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'A']
     """
 
-    def __init__(self, env):
-        super(ButtonDiscretizerWrapper, self).__init__(env)
-        buttons = ['B',
-                   'NULL',
-                   'SELECT',
-                   'START',
-                   'UP',
-                   'DOWN',
-                   'LEFT',
-                   'RIGHT',
-                   'A']
+    BUTTONS = (
+        "B",
+        "NULL",
+        "SELECT",
+        "START",
+        "UP",
+        "DOWN",
+        "LEFT",
+        "RIGHT",
+        "A",
+    )
 
-        actions = [
-            ['RIGHT'],                  # Move Right
-            ['RIGHT', 'A'],             # Move Right + Jump
-            ['RIGHT', 'B'],             # Move Right + Run
-            ['RIGHT', 'B', 'A'],        # Move Right + Run + Jump
-            ['A'],                      # Jump
-            ['LEFT'],                   # Move Left
-            ['LEFT', 'A'],              # Move Left + Jump
-            ['LEFT', 'B'],              # Move Left + Run
-            ['LEFT', 'B', 'A'],         # Move Left + Run + Jump
-            ['UP'],                     # Climb Up
-            ['DOWN'],                   # Duck
-            []                          # No Action
-        ]
+    ACTIONS = (
+        ("RIGHT",),
+        ("RIGHT", "A"),
+        ("RIGHT", "B"),
+        ("RIGHT", "B", "A"),
+        ("A",),
+        ("LEFT",),
+        ("LEFT", "A"),
+        ("LEFT", "B"),
+        ("LEFT", "B", "A"),
+        ("UP",),
+        ("DOWN",),
+        tuple(),
+    )
+
+    def __init__(self, env):
+        super().__init__(env)
+        button_to_idx = {b: i for i, b in enumerate(self.BUTTONS)}
+
         self._actions = []
-        for action in actions:
-            arr = np.array([False] * len(buttons))
-            for button in action:
-                arr[buttons.index(button)] = True
+        for action_buttons in self.ACTIONS:
+            arr = np.zeros((len(self.BUTTONS),), dtype=bool)
+            for button in action_buttons:
+                arr[button_to_idx[button]] = True
             self._actions.append(arr)
+
         self.action_space = gym.spaces.Discrete(len(self._actions))
 
     def action(self, a):

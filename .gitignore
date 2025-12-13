@@ -29,6 +29,7 @@ env/
 .envrc
 
 # Training outputs / artifacts
+outputs/
 ppo_super_mario_bros3*
 tensorboard/
 logs/
