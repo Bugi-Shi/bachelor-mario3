@@ -26,7 +26,7 @@ git clone https://github.com/Farama-Foundation/stable-retro.git
 Das Projekt enthält ein Skript setup.sh, das:
 - eine virtuelle Umgebung erstellt
 - Pakete installiert
-- stable-retro als Editable installiert
+- optional `stable-retro` als Editable installiert (falls `./stable-retro/` existiert)
 
 **Skript ausführen:**
 chmod +x setup.sh
@@ -34,6 +34,32 @@ chmod +x setup.sh
 
 **Danach kann die Umgebung jederzeit wieder aktiviert werden:**
 source project/bin/activate
+
+---
+
+## Setup (Allgemein / auf jedem Rechner)
+
+Minimaler Ablauf für andere Personen:
+
+1) Repo klonen
+2) Python **3.8** installieren (inkl. venv-Modul)
+3) `./setup.sh` ausführen (erstellt `project/` venv und installiert Dependencies)
+4) Starten mit `./project/bin/python main.py`
+
+Wichtig:
+- `requirements.txt` = Laufzeit-Dependencies (Top-Level)
+- `requirements-lock.txt` = *Freeze/Lock* (exakte Versionen). `setup.sh` nutzt standardmäßig das Lock-File.
+
+Wenn `pip install` bei jemandem fehlschlägt, fehlen meist System-Libs (OpenGL/SDL/ffmpeg). Unter Ubuntu/Debian ist diese Liste oft ausreichend:
+
+```bash
+sudo apt update
+sudo apt-get install -y \
+	python3.8 python3.8-venv python3-pip \
+	python3-opengl ffmpeg cmake \
+	zlib1g-dev \
+	libgl1 libglib2.0-0
+```
 
 ### 5. ROM hinzufügen und umwandeln (manuell)
 rom.nes -> stable-retro/retro/data/stable/SuperMarioBros3-Nes-v0 verschieben
