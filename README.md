@@ -44,18 +44,75 @@ sha1sum rom.nes
 -> müssen gleich sein
 
 ### 6. Projekt starten
+
+#### Training ausführen
+
+Am einfachsten startest du das Training über den Einstiegspunkt:
+
+```bash
+# (empfohlen) venv-python direkt nutzen
+./project/bin/python main.py
+
+# alternativ (wenn venv aktiv ist)
 python main.py
+```
+
+Beim Start wird automatisch ein neuer Run-Ordner unter `outputs/runs/<YYYY-MM-DD_HH-MM-SS>/` angelegt. Dort landen u.a.:
+
+- `tb/` – TensorBoard Event-Files (für Metriken/Scalars)
+- `stats/episode_stats.csv` – Episoden-Statistiken (z.B. Reward, Len, x/hpos)
+- `deaths/` – Death-Logs als `.jsonl`
+- `deaths_overlay.png` – Overlay für diesen Run
+
+Zusätzlich wird run-übergreifend geschrieben:
+
+- `outputs/allDeath.jsonl` – globale Death-Historie (JSONL)
+- `outputs/all_deaths_overlay.png` – Overlay aus allen Runs
+
+#### TensorBoard / „Tensorflow Dateien“ (Event-Files) auslesen
+
+TensorBoard liest die Event-Files aus dem `tb/`-Ordner. Du kannst entweder einen einzelnen Run anzeigen oder alle Runs zusammen.
+
+**1) Einen einzelnen Run anzeigen**
+
+```bash
+# Beispiel: einen konkreten Run öffnen
+./project/bin/tensorboard --logdir outputs/runs/2025-12-13_12-34-56/tb --port 6006
+```
+
+**2) Alle Runs zusammen anzeigen**
+
+```bash
+./project/bin/tensorboard --logdir outputs/runs --port 6006
+```
+
+Danach im Browser öffnen:
+
+- `http://localhost:6006`
+
+Wenn du in WSL/Remote arbeitest und von außen zugreifen willst, nutze zusätzlich:
+
+```bash
+./project/bin/tensorboard --logdir outputs/runs --port 6006 --bind_all
+```
 
 ### 7. Projektstruktur
 bachelor/
-│── stable-retro/        # Emulator backend (lokaler Checkout)
-│── project/             # Python virtual environment
-│── src/                 # Trainings-Skripte (PPO / NEAT) und Hilfs-Skripte
 │── .vscode/             # VS Code workspace settings & extension recommendations
-│── main.py              # Einstiegspunkt
-│── jump_test.py         # Beispielmodul für Mario-Test
+│── assets/              # Bilder/Level-Assets (z.B. Overlay-Base)
+│── env/                 # Environment-Factory (z.B. MB3_env.py)
+│── wrapper/             # Gym/Retro-Wrapper (Preprocessing, Death-Logger, etc.)
+│── utils/               # Callbacks, Run-Management, Plot/Overlay, Aggregation
+│── outputs/             # Trainingsartefakte (Runs, TensorBoard, CSV, Death-Logs)
+│── retro_custom/        # Custom Retro-Data/Configs (falls genutzt)
+│── project/             # Python virtual environment (venv)
+│── main.py              # Einstiegspunkt (Training starten)
+│── ppo.py               # PPO-Training (Stable-Baselines3)
+│── ppo_super_mario_bros3.zip # gespeichertes Modell (Beispiel/Checkpoint)
 │── setup.sh             # Automatisches Installationsskript (venv + Abhängigkeiten)
 │── requirements.txt     # Laufzeit-Dependencies
-│── requirements-dev.txt # Developer-Tools: black, isort, ruff
+│── requirements-dev.txt # Developer-Tools (Format/Lint)
+│── requirements-lock.txt# Gepinnte Versionen (z.B. tensorboard)
 │── .ruff.toml           # Ruff-Konfiguration (Formatierung/Linting)
+│── .gitignore
 └── README.md
