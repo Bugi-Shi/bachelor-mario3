@@ -1,0 +1,8 @@
+{
+    "venvPath": ".",
+    "venv": "project",
+    "typeCheckingMode": "basic",
+    "extraPaths": [
+        "."
+    ]
+}

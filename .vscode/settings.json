@@ -14,15 +14,10 @@
     ],
     "python.linting.enabled": true,
     "python.linting.ruffEnabled": true,
-    "python.linting.ruffPath": "/home/bugi/bachelor/project/bin/ruff",
+    "python.linting.ruffPath": "${workspaceFolder}/project/bin/ruff",
     "python.linting.pylintEnabled": false,
-    "python.analysis.typeCheckingMode": "basic",
-    "python.defaultInterpreterPath": "/home/bugi/bachelor/project/bin/python",
-    "python.analysis.extraPaths": [
-        "./project/lib/python3.10/site-packages",
-        "./stable-retro",
-        "./stable-retro/retro"
-    ],
+    "python.defaultInterpreterPath": "${workspaceFolder}/project/bin/python",
+    // NOTE: Pyright/Pylance analysis options (e.g., extraPaths/typeCheckingMode) must be set in pyrightconfig.json or pyproject.toml.
     "[python]": {
         "editor.defaultFormatter": "ms-python.python"
     }
