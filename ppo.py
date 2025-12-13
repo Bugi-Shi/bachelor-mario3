@@ -6,7 +6,7 @@ from stable_baselines3.common.vec_env import (
     VecMonitor,
 )
 
-from env.MB3_env import mariobros3_env
+from gamebuilder.MB3_env import mariobros3_env
 
 from utils.callbacks import MaxHposPerEpisodeCallback, ResetStatsCallback
 from utils.runs import create_run_dir
