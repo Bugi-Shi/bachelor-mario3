@@ -31,16 +31,26 @@ def mariobros3_env(
     rank: int = 0,
     *,
     run_dir: Optional[str] = None,
+    enable_death_logger: bool = True,
+    render_mode: Optional[str] = None,
 ):
     frame_skip = 4
     rank = int(rank)
 
     retro_data.add_custom_integration(custom_data_root)
     default_state = _read_default_state(custom_data_root)
-    env = retro.make(
-        "SuperMarioBros3-Nes",
-        inttype=retro_data.Integrations.CUSTOM_ONLY,
-    )
+    try:
+        env = retro.make(
+            "SuperMarioBros3-Nes",
+            inttype=retro_data.Integrations.CUSTOM_ONLY,
+            render_mode=render_mode,
+        )
+    except TypeError:
+        # Some retro versions don't expose render_mode in the make() API.
+        env = retro.make(
+            "SuperMarioBros3-Nes",
+            inttype=retro_data.Integrations.CUSTOM_ONLY,
+        )
 
     env = MaxAndSkipObservation(env, skip=frame_skip)
 
@@ -53,21 +63,22 @@ def mariobros3_env(
         lives_key="lives",
     )
 
-    # Keep "~4 seconds no progress" consistent even with frame_skip.
+    # Keep "~8 seconds no progress" consistent even with frame_skip.
     env = NoHposProgressGuardWrapper(
         env,
-        max_no_progress_steps=max(1, 240 // frame_skip),
+        max_no_progress_steps=max(1, 480 // frame_skip),
     )
     env = ButtonDiscretizerWrapper(env)
 
     # Log death positions for plotting (per-process file).
     # This wrapper must be OUTERMOST so it can observe terminations set by
     # any other wrapper (life loss, stuck termination, etc.).
-    if run_dir:
-        deaths_dir = Path(run_dir) / "deaths"
-    else:
-        project_root = Path(custom_data_root).resolve().parent
-        deaths_dir = project_root / "outputs" / "deaths"
-    log_path = deaths_dir / f"deaths_env{rank}.jsonl"
-    env = DeathPositionLoggerWrapper(env, log_path=str(log_path))
+    if enable_death_logger:
+        if run_dir:
+            deaths_dir = Path(run_dir) / "deaths"
+        else:
+            project_root = Path(custom_data_root).resolve().parent
+            deaths_dir = project_root / "outputs" / "deaths"
+        log_path = deaths_dir / f"deaths_env{rank}.jsonl"
+        env = DeathPositionLoggerWrapper(env, log_path=str(log_path))
     return env

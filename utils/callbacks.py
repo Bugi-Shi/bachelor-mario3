@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import cv2
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.vec_env import (
+    DummyVecEnv,
+    VecFrameStack,
+    VecMonitor,
+)
+
+from gamebuilder.MB3_env import mariobros3_env
 
 
 class ResetStatsCallback(BaseCallback):
@@ -51,13 +60,23 @@ class MaxHposPerEpisodeCallback(BaseCallback):
     - Appends rows to a CSV so you can plot later.
     """
 
-    def __init__(self, csv_path: str, verbose: int = 0):
+    def __init__(self, csv_path: str, window: int = 50, verbose: int = 0):
         super().__init__(verbose=verbose)
         self.csv_path = str(csv_path)
+        self.window = int(window)
 
         self._episode_idx = 0
+        # Total episodes ended across all envs since training start.
+        # Note: in VecEnvs typically only 1 env ends per step, so
+        # "episodes ended this step" often stays at 1.
+        self._episode_count_total = 0
         self._per_env_max_hpos: Optional[list[int]] = None
         self._per_env_max_x: Optional[list[int]] = None
+
+        self._window_max_hpos: deque[int] = deque(maxlen=self.window)
+        self._window_max_x: deque[int] = deque(maxlen=self.window)
+        self._window_rewards: deque[float] = deque(maxlen=self.window)
+        self._window_lens: deque[int] = deque(maxlen=self.window)
 
         self._header = (
             "episode,env,x,hpos,episode_reward,episode_len,life_lost,stuck\n"
@@ -124,8 +143,19 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                 if cur > self._per_env_max_hpos[env_i]:
                     self._per_env_max_hpos[env_i] = cur
 
-            # Global x is exposed by DeathPositionLoggerWrapper as info['x'].
+            # Prefer the wrapper-provided global X if present.
             x_val = info.get("x") if isinstance(info, dict) else None
+            # Fallback if the wrapper is not used but RAM fields exist.
+            if x_val is None and isinstance(info, dict):
+                world_x_hi = info.get("world_x_hi")
+                if world_x_hi is not None and hpos is not None:
+                    try:
+                        x_val = (
+                            self._to_int(world_x_hi) * 256
+                            + self._to_int(hpos)
+                        )
+                    except Exception:
+                        x_val = None
             if x_val is not None:
                 cur_x = self._to_int(x_val)
                 if cur_x > self._per_env_max_x[env_i]:
@@ -166,6 +196,14 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                 self._per_env_max_x[env_i] = 0
 
         if ended_envs:
+            # Update totals + rolling window (per episode, not per step).
+            self._episode_count_total += len(ended_envs)
+            for i in range(len(ended_envs)):
+                self._window_max_x.append(int(ended_max_x[i]))
+                self._window_max_hpos.append(int(ended_max_hpos[i]))
+                self._window_rewards.append(float(ended_rewards[i]))
+                self._window_lens.append(int(ended_lens[i]))
+
             with Path(self.csv_path).open("a", encoding="utf-8") as f:
                 for i, env_i in enumerate(ended_envs):
                     f.write(
@@ -176,6 +214,7 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                     )
                     self._episode_idx += 1
 
+            # Per-step aggregates (only episodes that ended this env step)
             self.logger.record(
                 "custom/max_x_episode_mean", float(np.mean(ended_max_x))
             )
@@ -187,6 +226,362 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                 "custom/episode_reward_mean",
                 float(np.nanmean(np.asarray(ended_rewards, dtype=np.float64))),
             )
-            self.logger.record("custom/episode_count", len(ended_envs))
+            # Keep old meaning available explicitly
+            self.logger.record(
+                "custom/episodes_ended_this_step", len(ended_envs)
+            )
+            # Make the metric people usually expect: cumulative episodes
+            self.logger.record(
+                "custom/episode_count", self._episode_count_total
+            )
+
+            # Rolling window aggregates (across ended episodes)
+            if self._window_max_x:
+                self.logger.record(
+                    "custom/max_x_episode_mean_window",
+                    float(
+                        np.mean(
+                            np.asarray(
+                                list(self._window_max_x),
+                                dtype=np.float64,
+                            )
+                        )
+                    ),
+                )
+            if self._window_max_hpos:
+                self.logger.record(
+                    "custom/max_hpos_episode_mean_window",
+                    float(
+                        np.mean(
+                            np.asarray(
+                                list(self._window_max_hpos),
+                                dtype=np.float64,
+                            )
+                        )
+                    ),
+                )
+            if self._window_rewards:
+                self.logger.record(
+                    "custom/episode_reward_mean_window",
+                    float(
+                        np.nanmean(
+                            np.asarray(
+                                list(self._window_rewards),
+                                dtype=np.float64,
+                            )
+                        )
+                    ),
+                )
+            if self._window_lens:
+                self.logger.record(
+                    "custom/episode_len_mean_window",
+                    float(
+                        np.mean(
+                            np.asarray(
+                                list(self._window_lens),
+                                dtype=np.float64,
+                            )
+                        )
+                    ),
+                )
 
         return True
+
+
+class VideoOnXImproveCallback(BaseCallback):
+    """Record a short rollout video whenever Mario reaches a new best X.
+
+    Uses per-episode max global x from info['x'] (provided by
+    DeathPositionLoggerWrapper during training). If info['x'] is not
+    present, falls back to deriving global x from hpos + a wrap heuristic.
+
+    Notes:
+    - Designed for VecEnvs: episode boundaries detected via `dones`.
+    - Records using a separate single-env evaluation env so training env isn't
+      touched.
+    """
+
+    def __init__(
+        self,
+        *,
+        custom_data_root: str,
+        out_dir: str,
+        n_stack: int = 4,
+        min_improvement_x: int = 1,
+        screen_width: int = 256,
+        wrap_threshold: int = 50,
+        wrap_prev_min: int = 200,
+        wrap_cur_max: int = 60,
+        wrap_cooldown_steps: int = 15,
+        video_length_steps: int = 1500,
+        fps: int = 30,
+        deterministic: bool = False,
+        min_episodes_before_trigger: int = 10,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose=verbose)
+        self.custom_data_root = str(custom_data_root)
+        self.out_dir = str(out_dir)
+        self.n_stack = int(n_stack)
+        self.min_improvement_x = int(min_improvement_x)
+
+        # Match DeathPositionLoggerWrapper defaults so x aligns with
+        # outputs/runs/*/deaths/deaths_env*.jsonl.
+        self.screen_width = int(screen_width)
+        self.wrap_threshold = int(wrap_threshold)
+        self.wrap_prev_min = int(wrap_prev_min)
+        self.wrap_cur_max = int(wrap_cur_max)
+        self.wrap_cooldown_steps = int(wrap_cooldown_steps)
+
+        self.video_length_steps = int(video_length_steps)
+        self.fps = int(fps)
+        self.deterministic = bool(deterministic)
+        self.min_episodes_before_trigger = int(min_episodes_before_trigger)
+
+        self._episodes_total = 0
+        self._best_x: Optional[int] = None
+        self._per_env_max_x: Optional[list[int]] = None
+
+        # Per-env tracking for screen wraps (same heuristic as logger wrapper)
+        self._per_env_prev_hpos: Optional[list[Optional[int]]] = None
+        self._per_env_screen_idx: Optional[list[int]] = None
+        self._per_env_wrap_cooldown: Optional[list[int]] = None
+
+    @staticmethod
+    def _to_int(value) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(np.asarray(value).item())
+
+    def _init_callback(self) -> None:
+        Path(self.out_dir).mkdir(parents=True, exist_ok=True)
+        n_envs = int(getattr(self.training_env, "num_envs", 1))
+        self._per_env_max_x = [0 for _ in range(n_envs)]
+        self._per_env_prev_hpos = [None for _ in range(n_envs)]
+        self._per_env_screen_idx = [0 for _ in range(n_envs)]
+        self._per_env_wrap_cooldown = [0 for _ in range(n_envs)]
+
+    def _maybe_advance_screen(
+        self, *, env_i: int, cur_hpos: int, ended: bool
+    ) -> None:
+        """Advance screen index using the same wrap heuristic as the logger."""
+
+        if (
+            ended
+            or self._per_env_prev_hpos is None
+            or self._per_env_screen_idx is None
+            or self._per_env_wrap_cooldown is None
+        ):
+            return
+
+        if self._per_env_wrap_cooldown[env_i] > 0:
+            self._per_env_wrap_cooldown[env_i] -= 1
+
+        prev = self._per_env_prev_hpos[env_i]
+        if prev is None:
+            self._per_env_prev_hpos[env_i] = int(cur_hpos)
+            return
+
+        # Heuristic: large drop without episode end -> likely screen boundary.
+        if (
+            self._per_env_wrap_cooldown[env_i] == 0
+            and int(cur_hpos) + self.wrap_threshold < int(prev)
+            and int(prev) >= self.wrap_prev_min
+            and int(cur_hpos) <= self.wrap_cur_max
+        ):
+            self._per_env_screen_idx[env_i] += 1
+            self._per_env_wrap_cooldown[env_i] = self.wrap_cooldown_steps
+
+        self._per_env_prev_hpos[env_i] = int(cur_hpos)
+
+    def _derived_global_x(
+        self, *, env_i: int, info: dict, ended: bool
+    ) -> Optional[int]:
+        hpos = info.get("hpos")
+        if hpos is None:
+            return None
+
+        # Prefer a real page/screen counter from RAM if available.
+        world_x_hi = info.get("world_x_hi")
+        if world_x_hi is not None:
+            try:
+                hi = self._to_int(world_x_hi)
+            except Exception:
+                hi = None
+            if hi is not None:
+                cur_hpos = self._to_int(hpos)
+                return int(hi * self.screen_width + cur_hpos)
+
+        if self._per_env_screen_idx is None:
+            return None
+
+        cur_hpos = self._to_int(hpos)
+        self._maybe_advance_screen(env_i=env_i, cur_hpos=cur_hpos, ended=ended)
+        return int(
+            self._per_env_screen_idx[env_i] * self.screen_width + cur_hpos
+        )
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos")
+        dones = self.locals.get("dones")
+        if (
+            infos is None
+            or dones is None
+            or self._per_env_max_x is None
+            or self._per_env_prev_hpos is None
+            or self._per_env_screen_idx is None
+            or self._per_env_wrap_cooldown is None
+        ):
+            return True
+
+        ended_max_x: list[int] = []
+
+        for env_i, (done, info) in enumerate(zip(dones, infos)):
+            ended = bool(done)
+            if isinstance(info, dict):
+                # Prefer wrapper-provided info['x'].
+                x_val = info.get("x")
+                if x_val is not None:
+                    cur_x = self._to_int(x_val)
+                else:
+                    # Fallback for setups without DeathPositionLoggerWrapper.
+                    derived_x = self._derived_global_x(
+                        env_i=env_i, info=info, ended=ended
+                    )
+                    cur_x = int(derived_x) if derived_x is not None else None
+
+                if cur_x is not None and cur_x > self._per_env_max_x[env_i]:
+                    self._per_env_max_x[env_i] = int(cur_x)
+
+            if ended:
+                ended_max_x.append(int(self._per_env_max_x[env_i]))
+                self._per_env_max_x[env_i] = 0
+
+                # Reset per-env screen tracking for the next episode.
+                self._per_env_prev_hpos[env_i] = None
+                self._per_env_screen_idx[env_i] = 0
+                self._per_env_wrap_cooldown[env_i] = 0
+
+        if not ended_max_x:
+            return True
+
+        self._episodes_total += len(ended_max_x)
+        step_best_x = int(np.max(np.asarray(ended_max_x, dtype=np.int64)))
+
+        self.logger.record("custom/episodes_total", self._episodes_total)
+        self.logger.record(
+            "custom/max_x_episode_mean", float(np.mean(ended_max_x))
+        )
+        self.logger.record("custom/max_x_episode_best_this_step", step_best_x)
+
+        if self._best_x is None:
+            self._best_x = step_best_x
+            self.logger.record("custom/x_video_baseline", float(self._best_x))
+            return True
+
+        # Avoid spamming early; let the policy stabilize first.
+        if self._episodes_total < self.min_episodes_before_trigger:
+            return True
+
+        if step_best_x >= int(self._best_x) + max(1, self.min_improvement_x):
+            try:
+                self._record_video(step_best_x)
+                self._best_x = step_best_x
+                self.logger.record(
+                    "custom/x_video_trigger_best_x", float(step_best_x)
+                )
+            except Exception as e:
+                if self.verbose:
+                    print(
+                        "[video-x-callback] Video recording failed: "
+                        f"{type(e).__name__}: {e}"
+                    )
+        return True
+
+    def _record_video(self, best_x: int) -> None:
+        if self.model is None:
+            return
+
+        out_dir = Path(self.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = (
+            f"bestx_{int(best_x)}_ep{self._episodes_total}_"
+            f"t{self.num_timesteps}.mp4"
+        )
+        out_path = out_dir / filename
+
+        # Single-env eval env with render_mode if available.
+        env = DummyVecEnv(
+            [
+                lambda: mariobros3_env(
+                    self.custom_data_root,
+                    rank=0,
+                    run_dir=None,
+                    enable_death_logger=False,
+                    render_mode="rgb_array",
+                )
+            ]
+        )
+        env = VecMonitor(env)
+        env = VecFrameStack(env, n_stack=self.n_stack)
+
+        obs = env.reset()
+
+        frame = env.envs[0].render()
+        if frame is None:
+            frame = env.envs[0].render(  # type: ignore[call-arg]
+                mode="rgb_array"
+            )
+        if frame is None:
+            raise RuntimeError(
+                "Env render() returned None; cannot record video"
+            )
+
+        frame_arr = np.asarray(frame)
+        if frame_arr.ndim != 3 or frame_arr.shape[2] != 3:
+            raise RuntimeError(
+                f"Unexpected render frame shape: {frame_arr.shape}"
+            )
+
+        height, width = int(frame_arr.shape[0]), int(frame_arr.shape[1])
+        fourcc_fn = getattr(cv2, "VideoWriter_fourcc", None)
+        if callable(fourcc_fn):
+            fourcc_val = fourcc_fn(*"mp4v")
+            fourcc = int(fourcc_val)  # type: ignore[arg-type]
+        else:
+            fourcc = int(cv2.VideoWriter.fourcc(*"mp4v"))
+
+        writer = cv2.VideoWriter(
+            str(out_path), fourcc, float(self.fps), (width, height)
+        )
+        if not writer.isOpened():
+            env.close()
+            raise RuntimeError("Failed to open cv2.VideoWriter")
+
+        try:
+            writer.write(cv2.cvtColor(frame_arr, cv2.COLOR_RGB2BGR))
+
+            for _ in range(self.video_length_steps):
+                action, _ = self.model.predict(
+                    obs,  # type: ignore[arg-type]
+                    deterministic=self.deterministic,
+                )
+                obs, _rewards, dones, _infos = env.step(action)
+
+                frame2 = env.envs[0].render()
+                if frame2 is None:
+                    frame2 = env.envs[0].render(  # type: ignore[call-arg]
+                        mode="rgb_array"
+                    )
+                if frame2 is not None:
+                    arr2 = np.asarray(frame2)
+                    if arr2.ndim == 3 and arr2.shape[2] == 3:
+                        writer.write(cv2.cvtColor(arr2, cv2.COLOR_RGB2BGR))
+
+                if bool(np.any(dones)):
+                    break
+        finally:
+            writer.release()
+            env.close()

@@ -8,7 +8,11 @@ from stable_baselines3.common.vec_env import (
 )
 
 from gamebuilder.MB3_env import mariobros3_env
-from utils.callbacks import MaxHposPerEpisodeCallback, ResetStatsCallback
+from utils.callbacks import (
+    MaxHposPerEpisodeCallback,
+    ResetStatsCallback,
+    VideoOnXImproveCallback,
+)
 from utils.death_aggregate import (
     append_run_deaths_to_global,
     load_global_death_xs,
@@ -42,7 +46,9 @@ def generate_death_artifacts(*, run_dir: Path) -> None:
                 ys=None,
                 out=Path("outputs") / "all_deaths_overlay.png",
             )
-            print(f"[train] Global deaths updated (+{added}); wrote: {out_all}")
+            print(
+                f"[train] Global deaths updated (+{added}); wrote: {out_all}"
+            )
         else:
             print(f"[train] Global deaths updated (+{added}); no xs yet")
     except Exception as e:
@@ -53,17 +59,60 @@ def generate_death_artifacts(*, run_dir: Path) -> None:
         print(msg)
 
 
-def train_ppo() -> None:
+def train_ppo(*, profile: str = "laptop") -> None:
     max_steps = 10_000_000
-    n_envs = 4
     n_stack = 4
     custom_data_root = str(Path(__file__).resolve().parent / "retro_custom")
 
+    if profile not in {"laptop", "pc"}:
+        raise ValueError(
+            f"Unknown profile: {profile!r} "
+            "(expected 'laptop' or 'pc')"
+        )
+
+    if profile == "pc":
+        n_envs = 10
+        n_steps = 1024
+        batch_size = 512
+        n_epochs = 3
+        learning_rate = 2e-4
+        ent_coef = 0.002
+        clip_range = 0.2
+        gamma = 0.99
+        gae_lambda = 0.95
+        max_grad_norm = 0.5
+        target_kl = 0.03
+        device = "cuda"
+    else:
+        # Conservative defaults that match the previous training setup.
+        n_envs = 4
+        n_steps = 1024
+        batch_size = 128
+        n_epochs = 3
+        learning_rate = 2e-4
+        ent_coef = 0.002
+        clip_range = 0.2
+        gamma = 0.99
+        gae_lambda = 0.95
+        max_grad_norm = 0.5
+        target_kl = 0.03
+        device = "auto"
+
     run_dir = create_run_dir()
     print(f"[train] run_dir: {run_dir}")
+    print(f"[train] profile: {profile}")
+    print(f"[train] n_envs: {n_envs}")
+    print(
+        "[train] PPO: "
+        f"n_steps={n_steps}, batch_size={batch_size}, n_epochs={n_epochs}, "
+        f"lr={learning_rate}, ent={ent_coef}, clip={clip_range}, "
+        f"gamma={gamma}, gae_lambda={gae_lambda}, "
+        f"max_grad_norm={max_grad_norm}, device={device}"
+    )
     print("[train] TensorBoard: tensorboard --logdir outputs/runs")
 
     stats_csv = str(run_dir / "stats" / "episode_stats.csv")
+    videos_dir = str(run_dir / "videos")
 
     venv = SubprocVecEnv(
         [
@@ -85,14 +134,18 @@ def train_ppo() -> None:
     model = PPO(
         policy="CnnPolicy",
         env=venv,
-        batch_size=128,
-        device="cuda",
-        ent_coef=0.01,
-        n_epochs=3,
-        n_steps=1024,
+        n_steps=n_steps,
+        batch_size=batch_size,
+        n_epochs=n_epochs,
+        learning_rate=learning_rate,
+        ent_coef=ent_coef,
+        clip_range=clip_range,
+        gamma=gamma,
+        gae_lambda=gae_lambda,
+        max_grad_norm=max_grad_norm,
         verbose=1,
-        learning_rate=1e-4,
-        clip_range=0.2,
+        target_kl=target_kl,
+        device=device,
         tensorboard_log=tb_logdir,
     )
 
@@ -103,6 +156,17 @@ def train_ppo() -> None:
             callback=[
                 ResetStatsCallback(),
                 MaxHposPerEpisodeCallback(csv_path=stats_csv),
+                VideoOnXImproveCallback(
+                    custom_data_root=custom_data_root,
+                    out_dir=videos_dir,
+                    n_stack=n_stack,
+                    min_improvement_x=1,
+                    min_episodes_before_trigger=0,
+                    video_length_steps=1500,
+                    fps=30,
+                    deterministic=True,
+                    verbose=1,
+                ),
             ],
         )
         model.save("ppo_super_mario_bros3")

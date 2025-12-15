@@ -95,6 +95,21 @@ Zusätzlich wird run-übergreifend geschrieben:
 - `outputs/allDeath.jsonl` – globale Death-Historie (JSONL)
 - `outputs/all_deaths_overlay.png` – Overlay aus allen Runs
 
+#### "Was sieht der Agent wirklich?" (Grayscale/Resize/Frame-Stack prüfen)
+
+Das normale Retro-Render-Fenster zeigt die **rohen** Frames aus dem Emulator.
+Um die Observation zu sehen, die tatsächlich ins Modell geht (grayscale + resize
+auf 84x84 + frame-stack), kannst du dir PNGs dumpen lassen:
+
+```bash
+./project/bin/python -m utils.agent_view --out outputs/agent_view
+```
+
+Das schreibt zwei Dateien:
+
+- `outputs/agent_view/agent_view_last.png` – letztes Frame aus dem Stack
+- `outputs/agent_view/agent_view_stack.png` – alle gestackten Frames als Montage
+
 #### TensorBoard / „Tensorflow Dateien“ (Event-Files) auslesen
 
 TensorBoard liest die Event-Files aus dem `tb/`-Ordner. Du kannst entweder einen einzelnen Run anzeigen oder alle Runs zusammen.

@@ -6,7 +6,22 @@ from utils.runs import latest_run_dir
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Mario PPO training entrypoint")
+    parser = argparse.ArgumentParser(
+        description="Mario PPO training entrypoint"
+    )
+
+    hw = parser.add_mutually_exclusive_group()
+    hw.add_argument(
+        "--laptop",
+        action="store_true",
+        help="Use conservative training hyperparameters for laptops.",
+    )
+    hw.add_argument(
+        "--pc",
+        action="store_true",
+        help="Use faster training hyperparameters for PCs (more envs/batch).",
+    )
+
     parser.add_argument(
         "--death",
         nargs="?",
@@ -41,8 +56,9 @@ def main() -> None:
         generate_death_artifacts(run_dir=run_dir)
         return
 
-    print("Starte Mario PPO Training aus main.py ...")
-    train_ppo()
+    profile = "pc" if args.pc else "laptop"
+    print(f"Starte Mario PPO Training aus main.py (profile={profile}) ...")
+    train_ppo(profile=profile)
     return
 
 

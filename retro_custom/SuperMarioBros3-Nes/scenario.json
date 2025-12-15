@@ -15,14 +15,16 @@
   "reward": {
     "variables": {
       "hpos": {
-        "penalty": 0.3,
-        "reward": 1.0
+        "reward": 1.0,
+        "penalty": 0.5,
+        "op": "delta"
       },
       "lives": {
-        "penalty": 20.0
+        "penalty": 100.0
       },
       "score": {
-        "reward": 0.05
+        "reward": 0.001,
+        "op": "delta"
       }
     }
   }

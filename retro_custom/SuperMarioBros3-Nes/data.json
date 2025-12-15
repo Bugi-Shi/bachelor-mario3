@@ -1,5 +1,9 @@
 {
   "info": {
+    "world_x_hi": {
+      "address": 117,
+      "type": "|u1"
+    },
     "hpos": {
       "address": 144,
       "type": "|u1"
