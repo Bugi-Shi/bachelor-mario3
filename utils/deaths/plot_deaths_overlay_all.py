@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from utils.death_overlay import load_deaths_from_dir, render_overlay
+from utils.deaths.death_overlay import load_deaths_from_dir, render_overlay
 
 
 def render_deaths_overlay_all(

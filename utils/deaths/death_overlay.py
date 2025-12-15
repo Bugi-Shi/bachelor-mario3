@@ -190,7 +190,11 @@ def load_deaths_file(path: Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
             len(obj) == 0 or isinstance(obj[0], dict)
         ):
             xs = [int(o["x"]) for o in obj]
-            ys = [int(o["y"]) for o in obj if "y" in o and o["y"] is not None]
+            ys = [
+                int(o["y"])
+                for o in obj
+                if "y" in o and o["y"] is not None
+            ]
             has_y = len(ys) == len(xs)
             return (
                 np.asarray(xs, dtype=np.int64),

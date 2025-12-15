@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from utils.death_overlay import load_deaths_file, render_overlay
+from utils.deaths.death_overlay import load_deaths_file, render_overlay
 
 
 def main() -> None:

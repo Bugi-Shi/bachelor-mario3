@@ -26,6 +26,8 @@ class ResetToDefaultStateByDeathWrapper(gym.Wrapper):
         self.lives_key = lives_key
         self._prev_lives = None
         self._force_default_state_on_reset = True
+        # Track which state the *current episode* started from.
+        self._episode_state = default_state
 
     def reset(self, **kwargs):
         if self._force_default_state_on_reset:
@@ -35,12 +37,21 @@ class ResetToDefaultStateByDeathWrapper(gym.Wrapper):
                     self.default_state,
                     inttype=self.inttype,
                 )
+            self._episode_state = self.default_state
             self._force_default_state_on_reset = False
         self._prev_lives = None
-        return self.env.reset(**kwargs)
+        obs, info = self.env.reset(**kwargs)
+        info = dict(info)
+        info["episode_state"] = self._episode_state
+        info["default_state"] = self.default_state
+        return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
+
+        info = dict(info)
+        info["episode_state"] = self._episode_state
+        info["default_state"] = self.default_state
 
         cur_lives = info.get(self.lives_key)
         if cur_lives is not None:

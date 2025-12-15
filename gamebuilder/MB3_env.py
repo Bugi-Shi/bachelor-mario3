@@ -12,6 +12,9 @@ from wrapper.no_progess_penalty import NoHposProgressGuardWrapper
 from wrapper.reset_by_death import ResetToDefaultStateByDeathWrapper
 from wrapper.obs_preprocess import GrayscaleResizeObservationWrapper
 from wrapper.death_position_logger import DeathPositionLoggerWrapper
+from wrapper.goal_reward_and_state_switch import (
+    GoalRewardAndStateSwitchWrapper,
+)
 
 
 def _read_default_state(custom_data_root: str) -> str:
@@ -81,4 +84,12 @@ def mariobros3_env(
             deaths_dir = project_root / "outputs" / "deaths"
         log_path = deaths_dir / f"deaths_env{rank}.jsonl"
         env = DeathPositionLoggerWrapper(env, log_path=str(log_path))
+
+    # Big reward at the end-of-level goal and switch future resets to Level 3.
+    env = GoalRewardAndStateSwitchWrapper(
+        env,
+        goal_x=2685,
+        goal_reward=500.0,
+        next_state="1Player.World1.Level3",
+    )
     return env

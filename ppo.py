@@ -13,12 +13,12 @@ from utils.callbacks import (
     ResetStatsCallback,
     VideoOnXImproveCallback,
 )
-from utils.death_aggregate import (
+from utils.deaths.death_aggregate import (
     append_run_deaths_to_global,
     load_global_death_xs,
 )
-from utils.death_overlay import render_overlay
-from utils.plot_deaths_overlay_all import render_deaths_overlay_all
+from utils.deaths.death_overlay import render_overlay
+from utils.deaths.plot_deaths_overlay_all import render_deaths_overlay_all
 from utils.runs import create_run_dir
 
 
