@@ -164,7 +164,7 @@ def train_ppo(*, profile: str = "laptop") -> None:
                     min_episodes_before_trigger=0,
                     video_length_steps=1500,
                     fps=30,
-                    deterministic=True,
+                    deterministic=False,
                     verbose=1,
                 ),
             ],
