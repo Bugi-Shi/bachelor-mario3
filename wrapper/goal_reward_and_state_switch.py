@@ -6,6 +6,8 @@ from typing import Any, Mapping, Optional
 
 from tempfile import NamedTemporaryFile
 
+from contextlib import contextmanager
+
 import gymnasium as gym
 import numpy as np
 
@@ -61,6 +63,7 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         *,
         goal_x: int,
         goal_reward: float,
+        required_successes: int = 1,
         next_state: Optional[str] = None,
         next_state_by_episode_state: Optional[Mapping[str, str]] = None,
         goal_x_by_episode_state: Optional[Mapping[str, int]] = None,
@@ -69,6 +72,7 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         super().__init__(env)
         self.goal_x = int(goal_x)
         self.goal_reward = float(goal_reward)
+        self.required_successes = max(1, int(required_successes))
         self.next_state = (
             _normalize_state_name(next_state)
             if next_state is not None
@@ -94,9 +98,54 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         )
 
         self._goal_reward_given: bool = False
+        self._goal_success_counted: bool = False
         # If we apply the shared switch during reset, emit a one-time info flag
         # on the next step so callbacks can react.
         self._pending_switch_info: bool = False
+
+    def _lock_path(self) -> Optional[Path]:
+        if self._shared_switch_path is None:
+            return None
+        return Path(str(self._shared_switch_path) + ".lock")
+
+    @contextmanager
+    def _shared_lock(self):
+        """Best-effort cross-process lock for the shared switch payload."""
+
+        lock_path = self._lock_path()
+        if lock_path is None:
+            yield
+            return
+
+        try:
+            import fcntl  # Unix-only
+
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with lock_path.open("a", encoding="utf-8") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+            return
+        except Exception:
+            # If locking is not available, proceed without it.
+            yield
+
+    def _read_shared_payload(self) -> dict:
+        if self._shared_switch_path is None:
+            return {}
+        try:
+            if not self._shared_switch_path.exists():
+                return {}
+            contents = self._shared_switch_path.read_text(encoding="utf-8")
+            data = json.loads(contents)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     @staticmethod
     def _to_int(value) -> Optional[int]:
@@ -109,6 +158,7 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
 
     def reset(self, **kwargs):
         self._goal_reward_given = False
+        self._goal_success_counted = False
         self._maybe_apply_shared_switch_before_reset()
         return self.env.reset(**kwargs)
 
@@ -138,12 +188,7 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         if self._shared_switch_path is None:
             return None
         try:
-            if not self._shared_switch_path.exists():
-                return None
-            contents = self._shared_switch_path.read_text(encoding="utf-8")
-            data = json.loads(contents)
-            if not isinstance(data, dict):
-                return None
+            data = self._read_shared_payload()
             state = data.get("next_state")
             if not isinstance(state, str):
                 return None
@@ -152,12 +197,11 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         except Exception:
             return None
 
-    def _write_shared_state(self, *, state: str) -> None:
+    def _write_shared_payload(self, payload: dict) -> None:
         if self._shared_switch_path is None:
             return
         try:
             self._shared_switch_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {"next_state": _normalize_state_name(state)}
             with NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -171,6 +215,50 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         except Exception:
             # Best-effort: training should not crash if writing fails.
             return
+
+    def _increment_success_and_maybe_switch(
+        self, *, current_state: str, target_next: str
+    ) -> tuple[int, bool]:
+        """Increment success count for current_state and maybe commit switch.
+
+        Returns: (success_count_for_current_state, did_switch_now)
+        """
+
+        if self._shared_switch_path is None:
+            # No shared file configured: fall back to immediate switch.
+            return self.required_successes, True
+
+        with self._shared_lock():
+            payload = self._read_shared_payload()
+
+            existing_next = payload.get("next_state")
+            if isinstance(existing_next, str) and _normalize_state_name(
+                existing_next
+            ):
+                # Someone already committed a switch; don't override.
+                return self.required_successes, False
+
+            counts = payload.get("success_counts")
+            if not isinstance(counts, dict):
+                counts = {}
+
+            cur_key = _normalize_state_name(current_state)
+            prev = counts.get(cur_key, 0)
+            try:
+                prev_i = int(prev)
+            except Exception:
+                prev_i = 0
+            new_count = prev_i + 1
+            counts[cur_key] = int(new_count)
+            payload["success_counts"] = counts
+
+            did_switch = False
+            if new_count >= self.required_successes:
+                payload["next_state"] = _normalize_state_name(target_next)
+                did_switch = True
+
+            self._write_shared_payload(payload)
+            return int(new_count), bool(did_switch)
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
@@ -196,23 +284,42 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
                 info["goal_reward"] = float(self.goal_reward)
 
             target_next = self._choose_next_state(info)
-            if target_next:
-                # Only write if this is a real progression step.
+            if target_next and not self._goal_success_counted:
+                self._goal_success_counted = True
                 current_shared = self._read_shared_state()
-                if current_shared != target_next:
-                    # Persist the switch so all env processes can pick it up.
-                    if self._shared_switch_path is not None:
-                        self._write_shared_state(state=target_next)
-
+                if current_shared:
+                    # A shared switch is already committed; adopt it.
                     reset_wrapper = _find_wrapper(
                         self.env, ResetToDefaultStateByDeathWrapper
                     )
                     if reset_wrapper is not None:
-                        reset_wrapper.default_state = target_next
-                        # Ensure the next episode actually starts from it.
+                        reset_wrapper.default_state = current_shared
                         reset_wrapper._force_default_state_on_reset = True
                         info["level_switched"] = True
-                        info["next_state"] = target_next
+                        info["next_state"] = current_shared
+                else:
+                    raw_episode_state = info.get("episode_state")
+                    cur_state = _normalize_state_name(str(raw_episode_state))
+                    success_count, did_switch = (
+                        self._increment_success_and_maybe_switch(
+                            current_state=cur_state,
+                            target_next=target_next,
+                        )
+                    )
+                    info["goal_success_count"] = int(success_count)
+                    info["goal_success_required"] = int(
+                        self.required_successes
+                    )
+
+                    if did_switch:
+                        reset_wrapper = _find_wrapper(
+                            self.env, ResetToDefaultStateByDeathWrapper
+                        )
+                        if reset_wrapper is not None:
+                            reset_wrapper.default_state = target_next
+                            reset_wrapper._force_default_state_on_reset = True
+                            info["level_switched"] = True
+                            info["next_state"] = target_next
 
         return obs, reward, terminated, truncated, info
 

@@ -17,6 +17,15 @@ from wrapper.goal_reward_and_state_switch import (
 )
 
 
+def _state_exists(custom_data_root: str, state_name: str) -> bool:
+    p = (
+        Path(custom_data_root)
+        / "SuperMarioBros3-Nes"
+        / f"{state_name}.state"
+    )
+    return p.exists() and p.is_file()
+
+
 def _read_default_state(custom_data_root: str) -> str:
     metadata_path = (
         Path(custom_data_root) / "SuperMarioBros3-Nes" / "metadata.json"
@@ -94,6 +103,16 @@ def mariobros3_env(
             project_root / "outputs" / "level_switch.json"
         )
 
+    # Optional curriculum shortcut for the Level 1-2 pit bottleneck.
+    # If a custom state exists, we start Level 2 from there instead of the
+    # beginning of the level.
+    level2_pit_state = "1Player.World1.Level2_Pit"
+    next_from_level1 = (
+        level2_pit_state
+        if _state_exists(custom_data_root, level2_pit_state)
+        else "1Player.World1.Level2"
+    )
+
     env = GoalRewardAndStateSwitchWrapper(
         env,
         goal_x=2685,
@@ -101,9 +120,11 @@ def mariobros3_env(
             "1Player.World1.Level3": 2440,
         },
         goal_reward=500.0,
+        required_successes=3,
         next_state_by_episode_state={
-            "1Player.World1.Level1": "1Player.World1.Level2",
+            "1Player.World1.Level1": next_from_level1,
             "1Player.World1.Level2": "1Player.World1.Level3",
+            "1Player.World1.Level2_Pit": "1Player.World1.Level3",
             "1Player.World1.Level3": "1Player.World1.Level6",
         },
         shared_switch_path=shared_switch_path,

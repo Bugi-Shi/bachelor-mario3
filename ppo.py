@@ -9,6 +9,7 @@ from stable_baselines3.common.vec_env import (
 
 from gamebuilder.MB3_env import mariobros3_env
 from utils.callbacks import (
+    HyperparamSwitchOnLevelCallback,
     MaxHposPerEpisodeCallback,
     ResetStatsCallback,
     VideoOnXImproveCallback,
@@ -150,12 +151,33 @@ def train_ppo(*, profile: str = "laptop") -> None:
         tensorboard_log=tb_logdir,
     )
 
+    # Targeted exploration boost for the Level 1-2 pit bottleneck:
+    # once training actually starts from Level 2 (or the Level2_Pit
+    # checkpoint), increase entropy coefficient and lower LR to help discover
+    # and retain the correct jump/box behavior.
+    ent_coef_level2 = 0.02
+    learning_rate_level2 = 1e-4
+
     try:
         model.learn(
             total_timesteps=max_steps,
             tb_log_name="ppo",
             callback=[
                 ResetStatsCallback(),
+                HyperparamSwitchOnLevelCallback(
+                    trigger_episode_states=(
+                        "1Player.World1.Level2",
+                        "1Player.World1.Level2_Pit",
+                        "1Player.World1.Level6",
+                    ),
+                    revert_episode_states=(
+                        "1Player.World1.Level1",
+                        "1Player.World1.Level3",
+                    ),
+                    ent_coef_after=ent_coef_level2,
+                    learning_rate_after=learning_rate_level2,
+                    verbose=1,
+                ),
                 MaxHposPerEpisodeCallback(csv_path=stats_csv),
                 VideoOnXImproveCallback(
                     custom_data_root=custom_data_root,
