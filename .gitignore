@@ -49,3 +49,6 @@ logs_ppo/
 *.rom
 *.bin
 *.sav
+
+# Local clones/builds (do not commit)
+external/

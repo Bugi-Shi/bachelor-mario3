@@ -11,7 +11,8 @@ wsl --install -d Ubuntu-22.04
 ### 1. Systempakete installieren
 
 sudo apt update
-sudo apt-get install -y python3 python3-pip python3-venv python-is-python3 python3-opengl git zlib1g-dev libopenmpi-dev ffmpeg cmake
+sudo apt-get install -y python3 python3-pip python3-venv python-is-python3 python3-opengl git build-essential zlib1g-dev libopenmpi-dev ffmpeg cmake
+sudo apt-get install -y capnproto libcapnp-dev libqt5opengl5-dev qtbase5-dev # integration tool
 
 ### 2. Repository klonen
 cd ~
@@ -94,6 +95,30 @@ Zusätzlich wird run-übergreifend geschrieben:
 
 - `outputs/allDeath.jsonl` – globale Death-Historie (JSONL)
 - `outputs/all_deaths_overlay.png` – Overlay aus allen Runs
+
+---
+
+## gym-retro Integration Tool (GUI) bauen/ausführen
+
+Wichtig: Das per `pip install gym-retro` installierte Paket enthält normalerweise **nicht** das GUI-Tool `gym-retro-integration`. Dafür brauchst du den gym-retro Source-Checkout + Build.
+
+Im Repo sind dafür Scripts hinterlegt:
+
+```bash
+# 1) System-Dependencies (falls noch nicht installiert)
+sudo apt update
+sudo apt-get install -y cmake git build-essential \
+	capnproto libcapnp-dev libqt5opengl5-dev qtbase5-dev zlib1g-dev \
+	pkg-config libbz2-dev
+
+# 2) Tool bauen (klont automatisch nach external/gym-retro)
+bash tools/retro_integration/build.sh
+
+# 3) Tool starten
+bash tools/retro_integration/run.sh
+```
+
+Hinweis zu WSL2: Das Tool ist eine Qt-GUI. Du brauchst WSLg (Windows 11) oder einen X-Server, sonst startet das Fenster nicht.
 
 #### "Was sieht der Agent wirklich?" (Grayscale/Resize/Frame-Stack prüfen)
 

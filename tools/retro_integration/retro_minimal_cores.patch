@@ -1,0 +1,29 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@
+-add_core(snes snes9x)
+-add_core(genesis genesis_plus_gx)
+-add_core(nes fceumm)
+-add_core(atari2600 stella)
+-add_core(gb gambatte)
+-add_core(gba mgba)
+-add_core(pce mednafen_pce_fast)
++option(
++    RETRO_BUILD_ALL_CORES
++    "Build all bundled libretro cores (may fail on newer compilers)"
++    OFF
++)
++
++if(RETRO_BUILD_ALL_CORES)
++    add_core(snes snes9x)
++    add_core(genesis genesis_plus_gx)
++    add_core(nes fceumm)
++    add_core(atari2600 stella)
++    add_core(gb gambatte)
++    add_core(gba mgba)
++    add_core(pce mednafen_pce_fast)
++else()
++    # Minimal: NES only (enough for SMB3) and avoids build issues in other cores.
++    add_core(nes fceumm)
++endif()

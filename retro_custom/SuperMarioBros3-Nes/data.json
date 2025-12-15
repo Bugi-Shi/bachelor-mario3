@@ -1,9 +1,5 @@
 {
   "info": {
-    "world_x_hi": {
-      "address": 117,
-      "type": "|u1"
-    },
     "hpos": {
       "address": 144,
       "type": "|u1"
@@ -19,6 +15,10 @@
     "time": {
       "address": 1800,
       "type": ">u4"
+    },
+    "world_x_hi": {
+      "address": 117,
+      "type": "|u1"
     }
   }
 }
