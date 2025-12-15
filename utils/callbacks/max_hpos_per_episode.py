@@ -86,18 +86,74 @@ class MaxHposPerEpisodeCallback(BaseCallback):
 
         return "Unknown"
 
+    @staticmethod
+    def _next_versioned_path(path: Path, *, header: str) -> Path:
+        """Return path or a _vN variant that matches the current header."""
+
+        cur = path
+        while cur.exists():
+            try:
+                first_line = cur.open("r", encoding="utf-8").readline()
+            except Exception:
+                first_line = ""
+            if first_line == header:
+                return cur
+
+            import re
+
+            stem = cur.stem
+            m = re.match(r"^(?P<base>.*)_v(?P<n>\d+)$", stem)
+            if m:
+                base = m.group("base")
+                n = int(m.group("n")) + 1
+            else:
+                base = stem
+                n = 2
+
+            cur = cur.with_name(f"{base}_v{n}{cur.suffix}")
+
+        return cur
+
     @classmethod
-    def _level_id(cls, raw_state: object) -> int:
-        code = cls._level_code(raw_state)
-        mapping = {
-            "1-1": 11,
-            "1-2": 12,
-            "1-3": 13,
-            "1-6": 16,
-            "1-A": 110,
-            "1-MF": 111,
-        }
-        return int(mapping.get(code, 0))
+    def _extract_global_x(cls, info: object) -> Optional[int]:
+        """Extract global x.
+
+        Prefers wrapper-provided info['x'], otherwise uses world_x_hi*256+hpos.
+        """
+
+        if not isinstance(info, dict):
+            return None
+
+        x_val = info.get("x")
+        if x_val is not None:
+            try:
+                return cls._to_int(x_val)
+            except Exception:
+                return None
+
+        hpos = info.get("hpos")
+        world_x_hi = info.get("world_x_hi")
+        if hpos is None or world_x_hi is None:
+            return None
+
+        try:
+            return cls._to_int(world_x_hi) * 256 + cls._to_int(hpos)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _record_window_mean(
+        logger,
+        *,
+        key: str,
+        values: deque,
+        nanmean: bool = False,
+    ) -> None:
+        if not values:
+            return
+        arr = np.asarray(list(values), dtype=np.float64)
+        val = float(np.nanmean(arr) if nanmean else np.mean(arr))
+        logger.record(key, val)
 
     @staticmethod
     def _to_int(value) -> int:
@@ -114,36 +170,10 @@ class MaxHposPerEpisodeCallback(BaseCallback):
         csv_file = Path(self.csv_path)
         csv_file.parent.mkdir(parents=True, exist_ok=True)
 
-        def _next_versioned_path(p: Path) -> Path:
-            """Return p or a _vN variant that matches the current header."""
-
-            cur = p
-            while cur.exists():
-                try:
-                    first_line = cur.open("r", encoding="utf-8").readline()
-                except Exception:
-                    first_line = ""
-                if first_line == self._header:
-                    return cur
-
-                stem = cur.stem
-                import re
-
-                m = re.match(r"^(?P<base>.*)_v(?P<n>\d+)$", stem)
-                if m:
-                    base = m.group("base")
-                    n = int(m.group("n")) + 1
-                else:
-                    base = stem
-                    n = 2
-
-                cur = cur.with_name(f"{base}_v{n}{cur.suffix}")
-
-            return cur
-
-        csv_file = _next_versioned_path(csv_file)
-        self.csv_path = str(csv_file)
-        if self.verbose and Path(self.csv_path) != Path(csv_file):
+        selected = self._next_versioned_path(csv_file, header=self._header)
+        old_path = Path(self.csv_path)
+        self.csv_path = str(selected)
+        if self.verbose and old_path != selected:
             print(
                 "[hpos-callback] Existing CSV schema differs; "
                 f"writing to: {self.csv_path}"
@@ -181,23 +211,9 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                 if cur > self._per_env_max_hpos[env_i]:
                     self._per_env_max_hpos[env_i] = cur
 
-            # Prefer the wrapper-provided global X if present.
-            x_val = info.get("x") if isinstance(info, dict) else None
-            # Fallback if the wrapper is not used but RAM fields exist.
-            if x_val is None and isinstance(info, dict):
-                world_x_hi = info.get("world_x_hi")
-                if world_x_hi is not None and hpos is not None:
-                    try:
-                        x_val = (
-                            self._to_int(world_x_hi) * 256
-                            + self._to_int(hpos)
-                        )
-                    except Exception:
-                        x_val = None
-            if x_val is not None:
-                cur_x = self._to_int(x_val)
-                if cur_x > self._per_env_max_x[env_i]:
-                    self._per_env_max_x[env_i] = cur_x
+            cur_x = self._extract_global_x(info)
+            if cur_x is not None and cur_x > self._per_env_max_x[env_i]:
+                self._per_env_max_x[env_i] = int(cur_x)
 
             if bool(done):
                 max_x = int(self._per_env_max_x[env_i])
@@ -312,53 +328,26 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                     )
 
             # Rolling window aggregates (across ended episodes)
-            if self._window_max_x:
-                self.logger.record(
-                    "custom/max_x_episode_mean_window",
-                    float(
-                        np.mean(
-                            np.asarray(
-                                list(self._window_max_x),
-                                dtype=np.float64,
-                            )
-                        )
-                    ),
-                )
-            if self._window_max_hpos:
-                self.logger.record(
-                    "custom/max_hpos_episode_mean_window",
-                    float(
-                        np.mean(
-                            np.asarray(
-                                list(self._window_max_hpos),
-                                dtype=np.float64,
-                            )
-                        )
-                    ),
-                )
-            if self._window_rewards:
-                self.logger.record(
-                    "custom/episode_reward_mean_window",
-                    float(
-                        np.nanmean(
-                            np.asarray(
-                                list(self._window_rewards),
-                                dtype=np.float64,
-                            )
-                        )
-                    ),
-                )
-            if self._window_lens:
-                self.logger.record(
-                    "custom/episode_len_mean_window",
-                    float(
-                        np.mean(
-                            np.asarray(
-                                list(self._window_lens),
-                                dtype=np.float64,
-                            )
-                        )
-                    ),
-                )
+            self._record_window_mean(
+                self.logger,
+                key="custom/max_x_episode_mean_window",
+                values=self._window_max_x,
+            )
+            self._record_window_mean(
+                self.logger,
+                key="custom/max_hpos_episode_mean_window",
+                values=self._window_max_hpos,
+            )
+            self._record_window_mean(
+                self.logger,
+                key="custom/episode_reward_mean_window",
+                values=self._window_rewards,
+                nanmean=True,
+            )
+            self._record_window_mean(
+                self.logger,
+                key="custom/episode_len_mean_window",
+                values=self._window_lens,
+            )
 
         return True

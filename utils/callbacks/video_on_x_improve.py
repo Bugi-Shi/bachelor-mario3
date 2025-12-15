@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Optional
 
-import cv2
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from gamebuilder.MB3_env import mariobros3_env
+from .video_replay import record_replay_video
 
 
 def _state_label(raw_state: Optional[object]) -> str:
@@ -30,25 +28,26 @@ def _state_label(raw_state: Optional[object]) -> str:
     return name
 
 
-def _set_env_default_state(env, *, state: str) -> None:
-    """Try to set the reset wrapper's default state inside env."""
+def _short_level_label(state_label: str) -> str:
+    """Return a short label used for filenames.
 
-    try:
-        from wrapper.reset_by_death import ResetToDefaultStateByDeathWrapper
-    except Exception:
-        return
+    Examples:
+        "World1.Level1" -> "Level1"
+        "World1.Level2_Pit" -> "Level2_Pit"
+        "World1.Airship" -> "Airship"
+    """
 
-    cur = env
-    while True:
-        if isinstance(cur, ResetToDefaultStateByDeathWrapper):
-            cur.default_state = str(state)
-            # Force the next reset to actually load the state.
-            cur._force_default_state_on_reset = True
-            return
-        nxt = getattr(cur, "env", None)
-        if nxt is None:
-            return
-        cur = nxt
+    s = str(state_label).strip()
+    if not s or s == "UnknownState":
+        return "Unknown"
+
+    # Keep only the suffix after the last dot (drops "WorldX.").
+    if "." in s:
+        s = s.split(".")[-1]
+
+    # Filename-safe.
+    s = s.replace("/", "_").replace("\\", "_")
+    return s or "Unknown"
 
 
 class VideoOnXImproveCallback(BaseCallback):
@@ -106,6 +105,10 @@ class VideoOnXImproveCallback(BaseCallback):
         self._per_env_max_x: Optional[list[int]] = None
         self._printed_locals_keys: bool = False
 
+        # Per-level attempt counter for simpler video names.
+        # Example: Level1_v1, Level1_v2, ... then Level2_v1, ...
+        self._per_level_version: dict[str, int] = {}
+
         # Per-env tracking for screen wraps (same heuristic as logger wrapper)
         self._per_env_prev_hpos: Optional[list[Optional[int]]] = None
         self._per_env_screen_idx: Optional[list[int]] = None
@@ -123,6 +126,7 @@ class VideoOnXImproveCallback(BaseCallback):
         n_envs = int(getattr(self.training_env, "num_envs", 1))
         self._per_env_max_x = [0 for _ in range(n_envs)]
         self._per_env_actions: list[list[int]] = [[] for _ in range(n_envs)]
+        self._per_env_goal_reached: list[bool] = [False for _ in range(n_envs)]
         self._per_env_prev_hpos = [None for _ in range(n_envs)]
         self._per_env_screen_idx = [0 for _ in range(n_envs)]
         self._per_env_wrap_cooldown = [0 for _ in range(n_envs)]
@@ -219,6 +223,7 @@ class VideoOnXImproveCallback(BaseCallback):
         ended_envs: list[int] = []
         ended_action_traces: list[list[int]] = []
         ended_episode_states: list[str] = []
+        ended_goal_reached: list[bool] = []
 
         saw_level_switch = False
 
@@ -253,6 +258,16 @@ class VideoOnXImproveCallback(BaseCallback):
                 if info.get("level_switched"):
                     saw_level_switch = True
 
+                # Track whether the current episode reached the goal at least
+                # once.
+                # GoalRewardAndStateSwitchWrapper sets info['goal_reached']
+                # when x>=goal_x.
+                try:
+                    if info.get("goal_reached"):
+                        self._per_env_goal_reached[env_i] = True
+                except Exception:
+                    pass
+
                 # Prefer wrapper-provided info['x'].
                 x_val = info.get("x")
                 if x_val is not None:
@@ -282,8 +297,12 @@ class VideoOnXImproveCallback(BaseCallback):
                         )
                     )
                 )
+                ended_goal_reached.append(
+                    bool(self._per_env_goal_reached[env_i])
+                )
                 self._per_env_max_x[env_i] = 0
                 self._per_env_actions[env_i].clear()
+                self._per_env_goal_reached[env_i] = False
 
                 # Reset per-env screen tracking for the next episode.
                 self._per_env_prev_hpos[env_i] = None
@@ -309,6 +328,52 @@ class VideoOnXImproveCallback(BaseCallback):
         )
         self.logger.record("custom/max_x_episode_best_this_step", step_best_x)
 
+        # If an episode ended that had reached the goal at least once, record
+        # it
+        # as a new "attempt" video even if best_x did not improve (end-of-level
+        # x often plateaus).
+        if any(ended_goal_reached):
+            try:
+                goal_idxs = [
+                    i for i, gr in enumerate(ended_goal_reached) if bool(gr)
+                ]
+                # Choose the goal episode with the largest max_x.
+                best_i = max(goal_idxs, key=lambda i: int(ended_max_x[i]))
+                trace = ended_action_traces[best_i]
+                state_label = (
+                    ended_episode_states[best_i]
+                    if best_i < len(ended_episode_states)
+                    else "UnknownState"
+                )
+
+                short_level = _short_level_label(state_label)
+                ver = int(self._per_level_version.get(short_level, 1))
+                trigger_ep = int(self._episodes_total)
+
+                self._record_video(
+                    int(ended_max_x[best_i]),
+                    action_trace=trace,
+                    state_label=state_label,
+                    episode_num=trigger_ep,
+                    level_name=short_level,
+                    version=ver,
+                )
+
+                # Advance the attempt version for the next replay of this
+                # level.
+                self._per_level_version[short_level] = int(ver + 1)
+
+                # Reset baseline so a repeated playthrough can trigger videos
+                # again.
+                self._best_x = None
+            except Exception as e:
+                if self.verbose:
+                    print(
+                        "[video-x-callback] Goal video recording failed: "
+                        f"{type(e).__name__}: {e}"
+                    )
+            return True
+
         if self._best_x is None:
             self._best_x = step_best_x
             self.logger.record("custom/x_video_baseline", float(self._best_x))
@@ -330,12 +395,16 @@ class VideoOnXImproveCallback(BaseCallback):
                     if best_i < len(ended_episode_states)
                     else "UnknownState"
                 )
+                short_level = _short_level_label(state_label)
+                ver = int(self._per_level_version.get(short_level, 1))
                 trigger_ep = int(self._episodes_total)
                 self._record_video(
                     step_best_x,
                     action_trace=trace,
                     state_label=state_label,
                     episode_num=trigger_ep,
+                    level_name=short_level,
+                    version=ver,
                 )
                 self._best_x = step_best_x
                 self.logger.record(
@@ -358,194 +427,41 @@ class VideoOnXImproveCallback(BaseCallback):
         action_trace: list[int],
         state_label: str,
         episode_num: int,
+        level_name: str,
+        version: int,
     ) -> None:
         if self.model is None:
             return
 
-        def _overlay_text(
-            bgr: np.ndarray,
-            *,
-            text: str,
-            org: tuple[int, int] = (8, 20),
-        ) -> np.ndarray:
-            try:
-                cv2.putText(
-                    bgr,
-                    text,
-                    org,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    bgr,
-                    text,
-                    org,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 0, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
-            except Exception:
-                pass
-            return bgr
-
         out_dir = Path(self.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        filename_tmp = (
-            f"{state_label}-Ep_{int(episode_num):04d}_"
-            f"bestx_{int(best_x):04d}.mp4"
-        )
-        out_path_tmp = out_dir / filename_tmp
+        level_name = _short_level_label(level_name)
+        ver = max(1, int(version))
 
-        # Re-play the exact episode using the captured action trace.
-        # Wrap with DeathPositionLoggerWrapper (logging to a temp file) so
-        # info['x'] matches the training/death-logger logic.
-        from wrapper.death_position_logger import DeathPositionLoggerWrapper
-
-        tmp_deaths_dir = tempfile.mkdtemp(prefix="video_eval_deaths_")
-        tmp_log_path = str(Path(tmp_deaths_dir) / "deaths_eval.jsonl")
-
-        base_env = DeathPositionLoggerWrapper(
-            mariobros3_env(
-                self.custom_data_root,
-                rank=0,
-                run_dir=None,
-                enable_death_logger=False,
-                render_mode="rgb_array",
-            ),
-            log_path=tmp_log_path,
-        )
-
-        # Make sure the replay starts from the same state we name the video by.
-        # Reverse the label mapping back to the common Retro state prefix.
-        # Example: "World1.Level3" -> "1Player.World1.Level3".
-        if (
-            state_label
-            and state_label != "UnknownState"
-            and not state_label.startswith("1Player.")
-        ):
-            replay_state = f"1Player.{state_label}"
-        else:
-            replay_state = state_label
-        if replay_state and replay_state != "UnknownState":
-            _set_env_default_state(base_env, state=replay_state)
-
-        _obs, _info = base_env.reset()
-
-        frame = base_env.render()
-        if frame is None:
-            raise RuntimeError(
-                "Env render() returned None; cannot record video"
-            )
-
-        frame_arr = np.asarray(frame)
-        if frame_arr.ndim != 3 or frame_arr.shape[2] != 3:
-            raise RuntimeError(
-                f"Unexpected render frame shape: {frame_arr.shape}"
-            )
-
-        height, width = int(frame_arr.shape[0]), int(frame_arr.shape[1])
-        fourcc_fn = getattr(cv2, "VideoWriter_fourcc", None)
-        if callable(fourcc_fn):
-            fourcc_val = fourcc_fn(*"mp4v")
-            fourcc = int(fourcc_val)  # type: ignore[arg-type]
-        else:
-            fourcc = int(cv2.VideoWriter.fourcc(*"mp4v"))
-
-        writer = cv2.VideoWriter(
-            str(out_path_tmp),
-            fourcc,
-            float(self.fps),
-            (width, height),
-        )
-        if not writer.isOpened():
-            base_env.close()
-            raise RuntimeError("Failed to open cv2.VideoWriter")
-
-        achieved_max_x: Optional[int] = None
-        last_x: Optional[int] = None
-        death_x: Optional[int] = None
-
-        try:
-            first_bgr = cv2.cvtColor(frame_arr, cv2.COLOR_RGB2BGR)
-            first_bgr = _overlay_text(first_bgr, text="x=?")
-            writer.write(first_bgr)
-
-            steps = len(action_trace)
-            for i in range(steps):
-                act = int(action_trace[i])
-                _obs, _reward, terminated, truncated, info = base_env.step(act)
-                ended = bool(terminated or truncated)
-
-                # Track x during the replay.
-                try:
-                    x_val = info.get("x") if isinstance(info, dict) else None
-                    if x_val is not None:
-                        cur_x = self._to_int(x_val)
-                        last_x = int(cur_x)
-                        achieved_max_x = (
-                            cur_x
-                            if achieved_max_x is None
-                            else max(int(achieved_max_x), int(cur_x))
-                        )
-                except Exception:
-                    pass
-
-                frame2 = base_env.render()
-                if frame2 is not None:
-                    arr2 = np.asarray(frame2)
-                    if arr2.ndim == 3 and arr2.shape[2] == 3:
-                        bgr2 = cv2.cvtColor(arr2, cv2.COLOR_RGB2BGR)
-                        if last_x is not None:
-                            bgr2 = _overlay_text(bgr2, text=f"x={int(last_x)}")
-                        else:
-                            bgr2 = _overlay_text(bgr2, text="x=?")
-                        writer.write(bgr2)
-
-                if ended:
-                    death_x = int(last_x) if last_x is not None else None
-                    break
-        finally:
-            writer.release()
-            base_env.close()
-
-        # Rename to include the achieved max x, so filenames match what you
-        # actually see in the video.
-        if achieved_max_x is None:
-            achieved_max_x = int(best_x)
-
-        if death_x is None:
-            if last_x is not None:
-                death_x = int(last_x)
-            else:
-                death_x = int(achieved_max_x)
-
-        # Requested filename scheme:
-        # World1.LevelX-Ep_XXXX_bestx_XXXX.mp4
-        # (episode number helps track spacing between videos).
         final_name = (
-            f"{state_label}-Ep_{int(episode_num):04d}_"
+            f"{level_name}_v{ver}_Ep_{int(episode_num):04d}_"
             f"bestx_{int(best_x):04d}.mp4"
         )
         final_path = out_dir / final_name
-        try:
-            if out_path_tmp.exists():
-                out_path_tmp.replace(final_path)
-        except Exception:
-            # If rename fails for any reason, keep the tmp filename.
-            final_path = out_path_tmp
+
+        written_path, achieved_max_x = record_replay_video(
+            custom_data_root=self.custom_data_root,
+            out_path=final_path,
+            action_trace=action_trace,
+            state_label=state_label,
+            fps=int(self.fps),
+            max_steps=int(self.video_length_steps),
+            to_int=self._to_int,
+            verbose=bool(self.verbose),
+        )
 
         if self.verbose:
             print(
                 "[video-x-callback] wrote:",
-                str(final_path),
+                str(written_path),
                 "trigger_x=",
                 int(best_x),
                 "recorded_max_x=",
-                int(achieved_max_x),
+                int(achieved_max_x) if achieved_max_x is not None else None,
             )
