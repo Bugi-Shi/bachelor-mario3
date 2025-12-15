@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -64,6 +64,7 @@ def draw_crosses(
     *,
     alpha: float,
     size: float,
+    color_rgb: Tuple[int, int, int] = (255, 0, 0),
 ) -> Image.Image:
     img = img_rgba.convert("RGBA")
     width, height = img.size
@@ -71,7 +72,8 @@ def draw_crosses(
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     a = int(max(0.0, min(1.0, float(alpha))) * 255)
-    color = (255, 0, 0, a)
+    r, g, b = (int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2]))
+    color = (r, g, b, a)
 
     half_len = max(2, int(round(float(size) / 2.0)))
     stroke = 2
@@ -95,7 +97,75 @@ def draw_crosses(
             width=stroke,
         )
 
-    return Image.alpha_composite(img, overlay).convert("RGB")
+    return Image.alpha_composite(img, overlay)
+
+
+def render_overlay_multi(
+    *,
+    image_path: Path,
+    groups: Sequence[
+        Tuple[np.ndarray, Optional[np.ndarray], Tuple[int, int, int]]
+    ],
+    out: Path,
+    default_y: Optional[int] = None,
+    alpha: float = 0.6,
+    size: float = 20.0,
+    print_scale_meta: bool = True,
+) -> Path:
+    """Render an overlay with multiple marker groups.
+
+    Intended for distinguishing e.g. death reasons by color.
+    """
+
+    img = Image.open(image_path).convert("RGBA")
+    width, height = img.size
+
+    half_len = max(2, int(round(float(size) / 2.0)))
+    if default_y is None:
+        # Place markers near the bottom edge but keep them fully visible.
+        default_y = max(0, int(height - 1 - (half_len + 2)))
+
+    for xs, ys, color_rgb in groups:
+        if xs is None:
+            continue
+        xs_arr = np.asarray(xs, dtype=np.float64)
+        if xs_arr.size == 0:
+            continue
+
+        x_pix, mask, meta = scale_x_to_image_width(xs_arr, width)
+        if print_scale_meta and meta.get("scaled"):
+            print(
+                "[death-overlay] Scaling x to image width ("
+                f"scale_x={meta['scale_x']:.4f}, "
+                f"x_ref~p99.5={meta['x_ref']:.1f}, "
+                f"x_max={meta['x_max']:.1f}, "
+                f"width={width})"
+            )
+
+        ys_pix: np.ndarray
+        if ys is not None:
+            ys_arr = np.asarray(ys, dtype=np.int64)
+            ys_arr = ys_arr[mask]
+            ys_pix = np.clip(ys_arr, 0, height - 1)
+        else:
+            ys_pix = np.full(
+                x_pix.shape,
+                fill_value=int(default_y),
+                dtype=np.int64,
+            )
+
+        img = draw_crosses(
+            img,
+            x_pix,
+            ys_pix,
+            alpha=alpha,
+            size=size,
+            color_rgb=color_rgb,
+        )
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out)
+    return out
 
 
 def read_jsonl_x(path: Path) -> List[int]:
@@ -212,9 +282,10 @@ def render_overlay(
     ys: Optional[np.ndarray] = None,
     out: Path,
     default_y: Optional[int] = None,
-    alpha: float = 0.35,
+    alpha: float = 0.6,
     size: float = 20.0,
     print_scale_meta: bool = True,
+    color_rgb: Tuple[int, int, int] = (255, 0, 0),
 ) -> Path:
     img = Image.open(image_path).convert("RGBA")
     width, height = img.size
@@ -232,15 +303,25 @@ def render_overlay(
     if ys is not None:
         ys = ys[mask]
 
+    half_len = max(2, int(round(float(size) / 2.0)))
+
     if ys is None:
         y0 = default_y
         if y0 is None:
-            y0 = int(height * 0.65)
+            # Place markers near the bottom edge but keep them fully visible.
+            y0 = max(0, int(height - 1 - (half_len + 2)))
         ys = np.full(x_pix.shape, fill_value=int(y0), dtype=np.int64)
     else:
         ys = np.clip(ys, 0, height - 1)
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    composed = draw_crosses(img, x_pix, ys, alpha=alpha, size=size)
-    composed.save(out)
+    composed = draw_crosses(
+        img,
+        x_pix,
+        ys,
+        alpha=alpha,
+        size=size,
+        color_rgb=color_rgb,
+    )
+    composed.convert("RGB").save(out)
     return out

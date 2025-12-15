@@ -97,8 +97,15 @@ def mariobros3_env(
     env = GoalRewardAndStateSwitchWrapper(
         env,
         goal_x=2685,
+        goal_x_by_episode_state={
+            "1Player.World1.Level3": 2440,
+        },
         goal_reward=500.0,
-        next_state="1Player.World1.Level3",
+        next_state_by_episode_state={
+            "1Player.World1.Level1": "1Player.World1.Level2",
+            "1Player.World1.Level2": "1Player.World1.Level3",
+            "1Player.World1.Level3": "1Player.World1.Level6",
+        },
         shared_switch_path=shared_switch_path,
     )
     return env

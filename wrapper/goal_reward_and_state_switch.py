@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from tempfile import NamedTemporaryFile
 
@@ -61,13 +61,30 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         *,
         goal_x: int,
         goal_reward: float,
-        next_state: str,
+        next_state: Optional[str] = None,
+        next_state_by_episode_state: Optional[Mapping[str, str]] = None,
+        goal_x_by_episode_state: Optional[Mapping[str, int]] = None,
         shared_switch_path: Optional[str] = None,
     ):
         super().__init__(env)
         self.goal_x = int(goal_x)
         self.goal_reward = float(goal_reward)
-        self.next_state = _normalize_state_name(next_state)
+        self.next_state = (
+            _normalize_state_name(next_state)
+            if next_state is not None
+            else ""
+        )
+        self.next_state_by_episode_state = {
+            _normalize_state_name(k): _normalize_state_name(v)
+            for k, v in (next_state_by_episode_state or {}).items()
+            if _normalize_state_name(k) and _normalize_state_name(v)
+        }
+
+        self.goal_x_by_episode_state = {
+            _normalize_state_name(k): int(v)
+            for k, v in (goal_x_by_episode_state or {}).items()
+            if _normalize_state_name(k)
+        }
 
         self._shared_switch_path = (
             Path(shared_switch_path)
@@ -77,7 +94,6 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         )
 
         self._goal_reward_given: bool = False
-        self._switched: bool = False
         # If we apply the shared switch during reset, emit a one-time info flag
         # on the next step so callbacks can react.
         self._pending_switch_info: bool = False
@@ -169,29 +185,49 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
             if shared_state:
                 info["next_state"] = shared_state
 
-        if x_val is not None and x_val >= self.goal_x:
+        goal_x = self._choose_goal_x(info)
+        if x_val is not None and x_val >= goal_x:
             info["goal_reached"] = True
-            info["goal_x"] = int(self.goal_x)
+            info["goal_x"] = int(goal_x)
 
             if not self._goal_reward_given:
                 reward = float(reward) + float(self.goal_reward)
                 self._goal_reward_given = True
                 info["goal_reward"] = float(self.goal_reward)
 
-            if not self._switched and self.next_state:
-                # Persist the switch so all env processes can pick it up.
-                if self._shared_switch_path is not None:
-                    self._write_shared_state(state=self.next_state)
+            target_next = self._choose_next_state(info)
+            if target_next:
+                # Only write if this is a real progression step.
+                current_shared = self._read_shared_state()
+                if current_shared != target_next:
+                    # Persist the switch so all env processes can pick it up.
+                    if self._shared_switch_path is not None:
+                        self._write_shared_state(state=target_next)
 
-                reset_wrapper = _find_wrapper(
-                    self.env, ResetToDefaultStateByDeathWrapper
-                )
-                if reset_wrapper is not None:
-                    reset_wrapper.default_state = self.next_state
-                    # Ensure the next episode actually starts from it.
-                    reset_wrapper._force_default_state_on_reset = True
-                    info["level_switched"] = True
-                    info["next_state"] = self.next_state
-                self._switched = True
+                    reset_wrapper = _find_wrapper(
+                        self.env, ResetToDefaultStateByDeathWrapper
+                    )
+                    if reset_wrapper is not None:
+                        reset_wrapper.default_state = target_next
+                        # Ensure the next episode actually starts from it.
+                        reset_wrapper._force_default_state_on_reset = True
+                        info["level_switched"] = True
+                        info["next_state"] = target_next
 
         return obs, reward, terminated, truncated, info
+
+    def _choose_next_state(self, info: dict) -> str:
+        """Pick the next state to switch to given current episode metadata."""
+
+        raw_episode_state = info.get("episode_state")
+        cur = _normalize_state_name(str(raw_episode_state))
+        if cur and cur in self.next_state_by_episode_state:
+            return self.next_state_by_episode_state[cur]
+        return self.next_state
+
+    def _choose_goal_x(self, info: dict) -> int:
+        raw_episode_state = info.get("episode_state")
+        cur = _normalize_state_name(str(raw_episode_state))
+        if cur and cur in self.goal_x_by_episode_state:
+            return int(self.goal_x_by_episode_state[cur])
+        return int(self.goal_x)

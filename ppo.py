@@ -15,10 +15,11 @@ from utils.callbacks import (
 )
 from utils.deaths.death_aggregate import (
     append_run_deaths_to_global,
-    load_global_death_xs,
 )
-from utils.deaths.death_overlay import render_overlay
-from utils.deaths.plot_deaths_overlay_all import render_deaths_overlay_all
+from utils.deaths.plot_deaths_overlay_all import (
+    render_deaths_overlay_all,
+    render_deaths_overlay_from_jsonl,
+)
 from utils.runs import create_run_dir
 
 
@@ -38,19 +39,19 @@ def generate_death_artifacts(*, run_dir: Path) -> None:
     # Update global deaths file and regenerate a global overlay.
     try:
         added = append_run_deaths_to_global(run_dir=Path(run_dir))
-        xs = load_global_death_xs()
-        if xs.size > 0:
-            out_all = render_overlay(
-                image_path=Path("assets/SuperMarioBros3Map1-1.png"),
-                xs=xs,
-                ys=None,
+        try:
+            out_all = render_deaths_overlay_from_jsonl(
+                deaths_jsonl=Path("outputs") / "allDeath.jsonl",
                 out=Path("outputs") / "all_deaths_overlay.png",
             )
             print(
                 f"[train] Global deaths updated (+{added}); wrote: {out_all}"
             )
-        else:
-            print(f"[train] Global deaths updated (+{added}); no xs yet")
+        except Exception as e:
+            print(
+                f"[train] Global deaths updated (+{added}); "
+                f"skipped overlay ({type(e).__name__}: {e})"
+            )
     except Exception as e:
         msg = (
             "[train] Skipped global deaths aggregation "
