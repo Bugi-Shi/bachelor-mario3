@@ -1,8 +1,61 @@
+from __future__ import annotations
+
 import argparse
+import json
 from pathlib import Path
 from typing import Optional
 
-from utils.deaths.death_overlay import load_deaths_from_dir, render_overlay
+import numpy as np
+
+from utils.deaths.death_overlay import render_overlay
+
+
+def _asset_for_level(level: str) -> Path:
+    """Map a short level code to the corresponding background image."""
+
+    lvl = str(level).strip()
+    if not lvl or lvl == "Unknown":
+        # Default to 1-1.
+        lvl = "1-1"
+
+    # World 1.
+    if lvl == "1-A":
+        return Path("assets") / "SuperMarioBros3Map1Airship.png"
+    if lvl == "1-MF":
+        return Path("assets") / "SuperMarioBros3Map1MiniFortress.png"
+
+    # Regular levels like 1-1..1-6.
+    return Path("assets") / f"SuperMarioBros3Map{lvl}.png"
+
+
+def _load_deaths_grouped(deaths_dir: Path) -> dict[str, list[int]]:
+    grouped: dict[str, list[int]] = {}
+    for p in sorted(Path(deaths_dir).glob("*.jsonl")):
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            x = obj.get("x")
+            if x is None:
+                continue
+            try:
+                x_i = int(x)
+            except Exception:
+                continue
+            level = obj.get("level")
+            level_s = str(level).strip() if level is not None else "Unknown"
+            grouped.setdefault(level_s, []).append(x_i)
+    return grouped
 
 
 def render_deaths_overlay_all(
@@ -13,19 +66,47 @@ def render_deaths_overlay_all(
     alpha: float = 0.35,
     size: float = 20.0,
 ) -> Path:
-    xs = load_deaths_from_dir(deaths_dir)
-    if xs.size == 0:
+    deaths_dir = Path(deaths_dir)
+    grouped = _load_deaths_grouped(deaths_dir)
+    if not grouped:
         raise RuntimeError(f"No death entries found in: {deaths_dir}")
 
-    return render_overlay(
-        image_path=Path("assets/level_1-1.png"),
-        xs=xs,
-        ys=None,
-        out=out,
-        default_y=default_y,
-        alpha=alpha,
-        size=size,
-    )
+    out = Path(out)
+    wrote: list[Path] = []
+
+    # If only one level exists, keep the caller-specified output name.
+    if len(grouped) == 1:
+        (level, xs_list) = next(iter(grouped.items()))
+        image_path = _asset_for_level(level)
+        return render_overlay(
+            image_path=image_path,
+            xs=np.asarray(xs_list, dtype=np.int64),
+            ys=None,
+            out=out,
+            default_y=default_y,
+            alpha=alpha,
+            size=size,
+        )
+
+    # Multiple levels: write one overlay per level.
+    for level, xs_list in sorted(grouped.items()):
+        if not xs_list:
+            continue
+        image_path = _asset_for_level(level)
+        out_level = out.with_name(f"{out.stem}_{level}{out.suffix}")
+        wrote.append(
+            render_overlay(
+                image_path=image_path,
+                xs=np.asarray(xs_list, dtype=np.int64),
+                ys=None,
+                out=out_level,
+                default_y=default_y,
+                alpha=alpha,
+                size=size,
+            )
+        )
+
+    return wrote[0] if wrote else out
 
 
 def main() -> None:

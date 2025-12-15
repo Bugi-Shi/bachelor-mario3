@@ -14,12 +14,10 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
     - info['no_hpos_progress_terminated'] is True (optional, still logged)
 
     Output schema (one JSON object per death):
+    - ep: per-env episode counter (starts at 1)
     - reason: "life_lost" | "stuck"
-    - x: global x (screen_idx * screen_width + hpos)
-    - hpos: local hpos in current screen
-    - live_lost: bool
-    - stuck_lost: bool
-    - screen_idx: int
+    - x: global x (the same value exposed as info['x'] and used by videos)
+    - level: short level code (e.g. "1-1", "1-3", "1-A", "1-MF")
 
         Preferred position signal:
         - If Retro provides `info['world_x_hi']` (a page/screen counter byte),
@@ -60,8 +58,12 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         self._last_global_x: Optional[int] = None
         self._last_hpos: Optional[int] = None
         self._logged_this_episode: bool = False
+        self._episode_idx: int = 0
+        self._episode_num: int = 0
 
     def reset(self, **kwargs):
+        self._episode_idx += 1
+        self._episode_num = int(self._episode_idx)
         self._prev_hpos = None
         self._prev_lives = None
         self._screen_idx = 0
@@ -70,6 +72,44 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         self._last_hpos = None
         self._logged_this_episode = False
         return self.env.reset(**kwargs)
+
+    @staticmethod
+    def _level_code(raw_state: Optional[object]) -> str:
+        """Return a short level code like '1-1' / '1-A' / '1-MF'."""
+
+        if raw_state is None:
+            return "Unknown"
+
+        s = str(raw_state).strip()
+        if not s:
+            return "Unknown"
+
+        name = Path(s).name
+        if name.endswith(".state"):
+            name = name[: -len(".state")]
+        if name.startswith("1Player."):
+            name = name[len("1Player."):]
+
+        # Expect patterns like:
+        #   World1.Level3
+        #   World1.Airship
+        #   World1.MiniFortress
+        # but be tolerant to other variants.
+        import re
+
+        m_world = re.search(r"World(?P<w>\d+)", name)
+        world = m_world.group("w") if m_world else "1"
+
+        if re.search(r"Airship", name, flags=re.IGNORECASE):
+            return f"{world}-A"
+        if re.search(r"MiniFortress", name, flags=re.IGNORECASE):
+            return f"{world}-MF"
+
+        m_level = re.search(r"Level(?P<l>\d+)", name)
+        if m_level:
+            return f"{world}-{m_level.group('l')}"
+
+        return "Unknown"
 
     def _choose_screen_idx(
         self,
@@ -191,28 +231,22 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         if should_log and not self._logged_this_episode:
             # Prefer last known pre-terminal position.
             global_x = self._last_global_x
-            logged_hpos = self._last_hpos
 
             # Fallbacks if we never captured a pre-terminal position.
             if global_x is None and cur_hpos is not None:
-                logged_hpos = int(cur_hpos)
                 global_x = int(
                     self._screen_idx * self.screen_width + int(cur_hpos)
                 )
             if global_x is None:
-                logged_hpos = 0
                 global_x = 0
 
-            live_lost = bool(reason == "life_lost")
-            stuck_lost = bool(reason == "stuck")
+            level = self._level_code(info.get("episode_state"))
             self._write(
                 {
+                    "ep": int(self._episode_num),
                     "reason": reason,
                     "x": int(global_x),
-                    "hpos": int(logged_hpos) if logged_hpos is not None else 0,
-                    "live_lost": live_lost,
-                    "stuck_lost": stuck_lost,
-                    "screen_idx": int(self._screen_idx),
+                    "level": level,
                 }
             )
             self._logged_this_episode = True

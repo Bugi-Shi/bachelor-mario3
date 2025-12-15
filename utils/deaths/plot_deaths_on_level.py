@@ -13,7 +13,7 @@ def main() -> None:
     parser.add_argument(
         "--image",
         type=Path,
-        default=Path("assets/level_1-1.png"),
+        default=Path("assets/SuperMarioBros3Map1-1.png"),
         help="Path to the level image (PNG).",
     )
     parser.add_argument(

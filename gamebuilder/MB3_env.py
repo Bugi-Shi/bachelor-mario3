@@ -86,10 +86,19 @@ def mariobros3_env(
         env = DeathPositionLoggerWrapper(env, log_path=str(log_path))
 
     # Big reward at the end-of-level goal and switch future resets to Level 3.
+    if run_dir:
+        shared_switch_path = str(Path(run_dir) / "level_switch.json")
+    else:
+        project_root = Path(custom_data_root).resolve().parent
+        shared_switch_path = str(
+            project_root / "outputs" / "level_switch.json"
+        )
+
     env = GoalRewardAndStateSwitchWrapper(
         env,
         goal_x=2685,
         goal_reward=500.0,
         next_state="1Player.World1.Level3",
+        shared_switch_path=shared_switch_path,
     )
     return env

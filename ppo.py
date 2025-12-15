@@ -41,7 +41,7 @@ def generate_death_artifacts(*, run_dir: Path) -> None:
         xs = load_global_death_xs()
         if xs.size > 0:
             out_all = render_overlay(
-                image_path=Path("assets/level_1-1.png"),
+                image_path=Path("assets/SuperMarioBros3Map1-1.png"),
                 xs=xs,
                 ys=None,
                 out=Path("outputs") / "all_deaths_overlay.png",
