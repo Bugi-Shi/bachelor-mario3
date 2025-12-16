@@ -105,10 +105,6 @@ class VideoOnXImproveCallback(BaseCallback):
         self._per_env_max_x: Optional[list[int]] = None
         self._printed_locals_keys: bool = False
 
-        # Per-level attempt counter for simpler video names.
-        # Example: Level1_v1, Level1_v2, ... then Level2_v1, ...
-        self._per_level_version: dict[str, int] = {}
-
         # Per-env tracking for screen wraps (same heuristic as logger wrapper)
         self._per_env_prev_hpos: Optional[list[Optional[int]]] = None
         self._per_env_screen_idx: Optional[list[int]] = None
@@ -347,7 +343,6 @@ class VideoOnXImproveCallback(BaseCallback):
                 )
 
                 short_level = _short_level_label(state_label)
-                ver = int(self._per_level_version.get(short_level, 1))
                 trigger_ep = int(self._episodes_total)
 
                 self._record_video(
@@ -356,12 +351,7 @@ class VideoOnXImproveCallback(BaseCallback):
                     state_label=state_label,
                     episode_num=trigger_ep,
                     level_name=short_level,
-                    version=ver,
                 )
-
-                # Advance the attempt version for the next replay of this
-                # level.
-                self._per_level_version[short_level] = int(ver + 1)
 
                 # Reset baseline so a repeated playthrough can trigger videos
                 # again.
@@ -396,7 +386,6 @@ class VideoOnXImproveCallback(BaseCallback):
                     else "UnknownState"
                 )
                 short_level = _short_level_label(state_label)
-                ver = int(self._per_level_version.get(short_level, 1))
                 trigger_ep = int(self._episodes_total)
                 self._record_video(
                     step_best_x,
@@ -404,7 +393,6 @@ class VideoOnXImproveCallback(BaseCallback):
                     state_label=state_label,
                     episode_num=trigger_ep,
                     level_name=short_level,
-                    version=ver,
                 )
                 self._best_x = step_best_x
                 self.logger.record(
@@ -428,7 +416,6 @@ class VideoOnXImproveCallback(BaseCallback):
         state_label: str,
         episode_num: int,
         level_name: str,
-        version: int,
     ) -> None:
         if self.model is None:
             return
@@ -437,10 +424,9 @@ class VideoOnXImproveCallback(BaseCallback):
         out_dir.mkdir(parents=True, exist_ok=True)
 
         level_name = _short_level_label(level_name)
-        ver = max(1, int(version))
 
         final_name = (
-            f"{level_name}_v{ver}_Ep_{int(episode_num):04d}_"
+            f"{level_name}_Ep_{int(episode_num):04d}_"
             f"bestx_{int(best_x):04d}.mp4"
         )
         final_path = out_dir / final_name
