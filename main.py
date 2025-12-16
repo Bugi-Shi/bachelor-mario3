@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
 
-from ppo import generate_death_artifacts, train_ppo
-from utils.runs import latest_run_dir
+from sandbox import generate_death_artifacts, train_ppo
+from utils.run_dir import latest_run_dir
 
 
 def _parse_args() -> argparse.Namespace:

@@ -121,6 +121,8 @@ def mariobros3_env(
         },
         goal_reward=500.0,
         required_successes=3,
+        commit_switch=False,
+        emit_candidate_info=True,
         next_state_by_episode_state={
             "1Player.World1.Level1": next_from_level1,
             "1Player.World1.Level2": "1Player.World1.Level3",

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import multiprocessing as mp
 import tempfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import cv2
 import numpy as np
 
 from gamebuilder.MB3_env import mariobros3_env
+from utils.pretty_terminal.ignore_signals import ignore_sigint
 
 
 def _set_env_default_state(env, *, state: str) -> None:
@@ -70,20 +72,28 @@ def _choose_fourcc() -> int:
     return int(cv2.VideoWriter.fourcc(*"mp4v"))
 
 
-def record_replay_video(
+def _to_int_default(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except Exception:
+        return int(np.asarray(value).item())
+
+
+def _record_replay_video_impl(
     *,
     custom_data_root: str,
     out_path: str | Path,
     action_trace: list[int],
     state_label: str,
     fps: int,
-    max_steps: Optional[int] = None,
+    max_steps: Optional[int],
     to_int: Callable[[object], int],
-    verbose: bool = False,
+    verbose: bool,
 ) -> tuple[Path, Optional[int]]:
-    """Replay an action trace in a fresh env and record it to an MP4.
+    """In-process implementation for replay+record.
 
-    Returns (final_path, achieved_max_x).
+    Keep this separated so we can call it inside a subprocess worker without
+    recursively spawning.
     """
 
     out_path = Path(out_path)
@@ -227,3 +237,143 @@ def record_replay_video(
         )
 
     return out_path, achieved_max_x
+
+
+def _record_replay_video_worker(params: dict[str, Any], conn) -> None:
+    # When the user hits Ctrl+C during training, the terminal sends SIGINT to
+    # the whole foreground process group. We don't want the *video worker*
+    # to print a KeyboardInterrupt traceback; the main training loop handles
+    # the interrupt.
+    ignore_sigint()
+
+    try:
+        max_steps_val = params.get("max_steps")
+        max_steps_parsed: Optional[int]
+        if max_steps_val is None:
+            max_steps_parsed = None
+        else:
+            max_steps_parsed = int(max_steps_val)
+
+        # Avoid passing non-picklable callables across processes.
+        to_int = _to_int_default
+        out_path, achieved_max_x = _record_replay_video_impl(
+            custom_data_root=str(params["custom_data_root"]),
+            out_path=str(params["out_path"]),
+            action_trace=list(params["action_trace"]),
+            state_label=str(params["state_label"]),
+            fps=int(params["fps"]),
+            max_steps=max_steps_parsed,
+            to_int=to_int,
+            verbose=bool(params.get("verbose", False)),
+        )
+        conn.send(
+            {
+                "ok": True,
+                "path": str(out_path),
+                "achieved_max_x": achieved_max_x,
+            }
+        )
+    except BaseException as e:
+        # Includes KeyboardInterrupt/SystemExit. Best-effort error reporting
+        # without emitting a traceback.
+        try:
+            conn.send({"ok": False, "error": f"{type(e).__name__}: {e}"})
+        except Exception:
+            pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def record_replay_video(
+    *,
+    custom_data_root: str,
+    out_path: str | Path,
+    action_trace: list[int],
+    state_label: str,
+    fps: int,
+    max_steps: Optional[int] = None,
+    to_int: Optional[Callable[[object], int]] = None,
+    isolate_process: bool = True,
+    timeout_s: int = 300,
+    verbose: bool = False,
+) -> tuple[Path, Optional[int]]:
+    """Replay an action trace in a fresh env and record it to an MP4.
+
+    Returns (final_path, achieved_max_x).
+    """
+
+    # Gym Retro only supports a single emulator instance per *process*.
+    # Our training process already holds an emulator via LevelGateEvalCallback,
+    # so recording must happen in an isolated subprocess.
+    if isolate_process:
+        ctx = mp.get_context("spawn")
+        parent_conn, child_conn = ctx.Pipe(duplex=False)
+        params = {
+            "custom_data_root": str(custom_data_root),
+            "out_path": str(out_path),
+            "action_trace": list(action_trace),
+            "state_label": str(state_label),
+            "fps": int(fps),
+            "max_steps": max_steps,
+            "verbose": bool(verbose),
+        }
+        proc = ctx.Process(
+            target=_record_replay_video_worker,
+            args=(params, child_conn),
+            daemon=True,
+        )
+        proc.start()
+        try:
+            child_conn.close()
+        except Exception:
+            pass
+
+        msg = None
+        try:
+            if parent_conn.poll(timeout=max(1, int(timeout_s))):
+                msg = parent_conn.recv()
+            else:
+                raise TimeoutError(
+                    f"Replay video worker timed out after {int(timeout_s)}s"
+                )
+        finally:
+            try:
+                parent_conn.close()
+            except Exception:
+                pass
+            proc.join(timeout=1)
+            if proc.is_alive():
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+        if msg is None and proc.exitcode not in (None, 0):
+            raise RuntimeError(
+                f"Replay video worker exited with code {proc.exitcode}"
+            )
+
+        if not isinstance(msg, dict) or not msg.get("ok"):
+            err = (
+                "Unknown error"
+                if not isinstance(msg, dict)
+                else str(msg.get("error") or "Unknown error")
+            )
+            raise RuntimeError(err)
+
+        return Path(str(msg["path"])), msg.get("achieved_max_x")
+
+    to_int_fn = to_int if callable(to_int) else _to_int_default
+    return _record_replay_video_impl(
+        custom_data_root=str(custom_data_root),
+        out_path=str(out_path),
+        action_trace=list(action_trace),
+        state_label=str(state_label),
+        fps=int(fps),
+        max_steps=max_steps,
+        to_int=to_int_fn,
+        verbose=bool(verbose),
+    )

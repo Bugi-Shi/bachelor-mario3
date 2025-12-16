@@ -6,21 +6,38 @@ Dieses Projekt nutzt **stable-retro** und verschiedene RL-Algorithmen, um SuperM
 
 ## Setup (WSL2 Ubuntu 22.04)
 
+```bash
 wsl --install -d Ubuntu-22.04
+```
 
 ### 1. Systempakete installieren
 
+```bash
 sudo apt update
-sudo apt-get install -y python3 python3-pip python3-venv python-is-python3 python3-opengl git build-essential zlib1g-dev libopenmpi-dev ffmpeg cmake
-sudo apt-get install -y capnproto libcapnp-dev libqt5opengl5-dev qtbase5-dev # integration tool
+sudo apt-get install -y python3 python3-pip python3-venv python-is-python3 \
+	python3-opengl git build-essential zlib1g-dev libopenmpi-dev ffmpeg cmake
+
+# integration tool (optional)
+sudo apt-get install -y capnproto libcapnp-dev libqt5opengl5-dev qtbase5-dev
+```
 
 ### 2. Repository klonen
+
+```bash
 cd ~
 git clone git@github.com:Bugi-Shi/bachelor-mario3.git bachelor
 cd bachelor
+```
 
-### 3. stable-retro klonen
+### 3. stable-retro klonen (optional)
+
+Nur nötig, wenn du lokal an stable-retro arbeiten willst oder deren Tooling
+brauchst. `setup.sh` installiert es dann automatisch editable, falls
+`./stable-retro/` existiert.
+
+```bash
 git clone https://github.com/Farama-Foundation/stable-retro.git
+```
 
 ### 4. Setup-Skript ausführen (automatisiert)
 
@@ -30,11 +47,15 @@ Das Projekt enthält ein Skript setup.sh, das:
 - optional `stable-retro` als Editable installiert (falls `./stable-retro/` existiert)
 
 **Skript ausführen:**
+```bash
 chmod +x setup.sh
 ./setup.sh
+```
 
 **Danach kann die Umgebung jederzeit wieder aktiviert werden:**
+```bash
 source project/bin/activate
+```
 
 ---
 
@@ -45,7 +66,7 @@ Minimaler Ablauf für andere Personen:
 1) Repo klonen
 2) Python **3.8** installieren (inkl. venv-Modul)
 3) `./setup.sh` ausführen (erstellt `project/` venv und installiert Dependencies)
-4) Starten mit `./project/bin/python main.py`
+4) Starten mit `./project/bin/python -u main.py`
 
 Wichtig:
 - `requirements.txt` = Laufzeit-Dependencies (Top-Level)
@@ -78,10 +99,14 @@ Am einfachsten startest du das Training über den Einstiegspunkt:
 
 ```bash
 # (empfohlen) venv-python direkt nutzen
-./project/bin/python main.py
+./project/bin/python -u main.py
 
 # alternativ (wenn venv aktiv ist)
-python main.py
+python -u main.py
+
+# Profile:
+./project/bin/python -u main.py --laptop
+./project/bin/python -u main.py --pc
 ```
 
 Beim Start wird automatisch ein neuer Run-Ordner unter `outputs/runs/<YYYY-MM-DD_HH-MM-SS>/` angelegt. Dort landen u.a.:
@@ -95,6 +120,19 @@ Zusätzlich wird run-übergreifend geschrieben:
 
 - `outputs/allDeath.jsonl` – globale Death-Historie (JSONL)
 - `outputs/all_deaths_overlay.png` – Overlay aus allen Runs
+
+Abbruch:
+- Mit `Ctrl+C` kannst du Training abbrechen (Worker sollten dabei möglichst leise bleiben).
+
+Death-Overlays nachträglich generieren:
+```bash
+./project/bin/python -u main.py --death
+./project/bin/python -u main.py --death latest
+./project/bin/python -u main.py --death outputs/runs/<RUN_ID>
+```
+
+Hinweis (Gym-Banner):
+- Das "Gym has been unmaintained..." Banner wird im venv per Startup-Hook unterdrückt. Nutze dafür am besten `./project/bin/python ...`.
 
 ---
 
@@ -166,14 +204,17 @@ Wenn du in WSL/Remote arbeitest und von außen zugreifen willst, nutze zusätzli
 bachelor/
 │── .vscode/             # VS Code workspace settings & extension recommendations
 │── assets/              # Bilder/Level-Assets (z.B. Overlay-Base)
-│── env/                 # Environment-Factory (z.B. MB3_env.py)
+│── gamebuilder/         # Environment-Factory (z.B. MB3_env.py)
+│── external/            # Vendor/Build (z.B. gym-retro checkout/build)
 │── wrapper/             # Gym/Retro-Wrapper (Preprocessing, Death-Logger, etc.)
 │── utils/               # Callbacks, Run-Management, Plot/Overlay, Aggregation
+│   └── pretty_terminal/  # Ctrl+C/Gym-Banner "quiet" helpers
 │── outputs/             # Trainingsartefakte (Runs, TensorBoard, CSV, Death-Logs)
 │── retro_custom/        # Custom Retro-Data/Configs (falls genutzt)
+│── tools/               # Helper scripts (z.B. retro_integration)
 │── project/             # Python virtual environment (venv)
 │── main.py              # Einstiegspunkt (Training starten)
-│── ppo.py               # PPO-Training (Stable-Baselines3)
+│── sandbox.py           # PPO-Training (Stable-Baselines3)
 │── ppo_super_mario_bros3.zip # gespeichertes Modell (Beispiel/Checkpoint)
 │── setup.sh             # Automatisches Installationsskript (venv + Abhängigkeiten)
 │── requirements.txt     # Laufzeit-Dependencies

@@ -452,7 +452,7 @@ class VideoOnXImproveCallback(BaseCallback):
             state_label=state_label,
             fps=int(self.fps),
             max_steps=int(self.video_length_steps),
-            to_int=self._to_int,
+            isolate_process=True,
             verbose=bool(self.verbose),
         )
 

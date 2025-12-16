@@ -64,6 +64,8 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         goal_x: int,
         goal_reward: float,
         required_successes: int = 1,
+        commit_switch: bool = True,
+        emit_candidate_info: bool = True,
         next_state: Optional[str] = None,
         next_state_by_episode_state: Optional[Mapping[str, str]] = None,
         goal_x_by_episode_state: Optional[Mapping[str, int]] = None,
@@ -73,6 +75,8 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         self.goal_x = int(goal_x)
         self.goal_reward = float(goal_reward)
         self.required_successes = max(1, int(required_successes))
+        self.commit_switch = bool(commit_switch)
+        self.emit_candidate_info = bool(emit_candidate_info)
         self.next_state = (
             _normalize_state_name(next_state)
             if next_state is not None
@@ -284,6 +288,18 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
                 info["goal_reward"] = float(self.goal_reward)
 
             target_next = self._choose_next_state(info)
+
+            # Always expose the candidate next state so an outer callback can
+            # implement a deterministic eval gate.
+            if self.emit_candidate_info and target_next:
+                info["goal_candidate_next_state"] = _normalize_state_name(
+                    target_next
+                )
+
+            # If switching is externally managed, don't count/commit here.
+            if not self.commit_switch:
+                return obs, reward, terminated, truncated, info
+
             if target_next and not self._goal_success_counted:
                 self._goal_success_counted = True
                 current_shared = self._read_shared_state()

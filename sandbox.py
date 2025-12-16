@@ -4,7 +4,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecFrameStack, VecMonitor
 
 from gamebuilder.MB3_env import mariobros3_env
-from pretty_terminal.quiet_subproc_vec_env import QuietSubprocVecEnv
+from utils.pretty_terminal.quiet_subproc_vec_env import QuietSubprocVecEnv
 from utils.callbacks import (
     HyperparamSwitchOnLevelCallback,
     LevelGateEvalCallback,
@@ -19,7 +19,7 @@ from utils.deaths.plot_deaths_overlay_all import (
     render_deaths_overlay_all,
     render_deaths_overlay_from_jsonl,
 )
-from utils.runs import create_run_dir
+from utils.run_dir import create_run_dir
 
 
 def _safe_close_env(env) -> None:
