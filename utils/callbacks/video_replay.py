@@ -306,8 +306,8 @@ def record_replay_video(
     """
 
     # Gym Retro only supports a single emulator instance per *process*.
-    # Our training process already holds an emulator via LevelGateEvalCallback,
-    # so recording must happen in an isolated subprocess.
+    # Training already holds an emulator, so recording must happen in an
+    # isolated subprocess.
     if isolate_process:
         ctx = mp.get_context("spawn")
         parent_conn, child_conn = ctx.Pipe(duplex=False)

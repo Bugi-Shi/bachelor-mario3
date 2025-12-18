@@ -7,7 +7,7 @@ from gamebuilder.MB3_env import mariobros3_env
 from utils.pretty_terminal.quiet_subproc_vec_env import QuietSubprocVecEnv
 from utils.callbacks import (
     HyperparamSwitchOnLevelCallback,
-    LevelGateEvalCallback,
+    GoalWindowGateCallback,
     MaxHposPerEpisodeCallback,
     ResetStatsCallback,
     VideoOnXImproveCallback,
@@ -164,12 +164,10 @@ def train_ppo(*, profile: str = "laptop") -> None:
         tensorboard_log=tb_logdir,
     )
 
-    # Targeted exploration boost for the Level 1-2 pit bottleneck:
-    # once training actually starts from Level 2 (or the Level2_Pit
-    # checkpoint), increase entropy coefficient and lower LR to help discover
-    # and retain the correct jump/box behavior.
-    ent_coef_level2 = 0.02
-    learning_rate_level2 = 1e-4
+    # Pit in 1-2 is a death black hole
+    # Try to give more puffer to explore more
+    ent_coef_pitslayer = 0.03
+    learning_rate_pitslayer = 1e-4
 
     try:
         try:
@@ -178,13 +176,10 @@ def train_ppo(*, profile: str = "laptop") -> None:
                 tb_log_name="ppo",
                 callback=[
                     ResetStatsCallback(),
-                    LevelGateEvalCallback(
-                        custom_data_root=custom_data_root,
+                    GoalWindowGateCallback(
                         shared_switch_path=shared_switch_path,
                         required_successes=3,
-                        eval_max_steps=6000,
-                        deterministic=True,
-                        cooldown_steps=50_000,
+                        window_episodes=10,
                         verbose=1,
                     ),
                     HyperparamSwitchOnLevelCallback(
@@ -197,8 +192,8 @@ def train_ppo(*, profile: str = "laptop") -> None:
                             "1Player.World1.Level1",
                             "1Player.World1.Level3",
                         ),
-                        ent_coef_after=ent_coef_level2,
-                        learning_rate_after=learning_rate_level2,
+                        ent_coef_after=ent_coef_pitslayer,
+                        learning_rate_after=learning_rate_pitslayer,
                         verbose=1,
                     ),
                     MaxHposPerEpisodeCallback(

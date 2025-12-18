@@ -51,7 +51,7 @@ def _short_level_label(state_label: str) -> str:
 
 
 class VideoOnXImproveCallback(BaseCallback):
-    """Record a short rollout video whenever Mario reaches a new best X.
+    """Record best-x videos until first goal, then goal-only.
 
     Uses per-episode max global x from info['x'] (provided by
     DeathPositionLoggerWrapper during training). If info['x'] is not
@@ -70,6 +70,7 @@ class VideoOnXImproveCallback(BaseCallback):
         out_dir: str,
         n_stack: int = 4,
         min_improvement_x: int = 1,
+        fallback_goal_x: Optional[int] = None,
         screen_width: int = 256,
         wrap_threshold: int = 50,
         wrap_prev_min: int = 200,
@@ -86,6 +87,9 @@ class VideoOnXImproveCallback(BaseCallback):
         self.out_dir = str(out_dir)
         self.n_stack = int(n_stack)
         self.min_improvement_x = int(min_improvement_x)
+        self.fallback_goal_x = (
+            int(fallback_goal_x) if fallback_goal_x is not None else None
+        )
 
         # Match DeathPositionLoggerWrapper defaults so x aligns with
         # outputs/runs/*/deaths/deaths_env*.jsonl.
@@ -102,7 +106,9 @@ class VideoOnXImproveCallback(BaseCallback):
 
         self._episodes_total = 0
         self._best_x: Optional[int] = None
+        self._goal_only: bool = False
         self._per_env_max_x: Optional[list[int]] = None
+        self._per_env_goal_x: Optional[list[Optional[int]]] = None
         self._printed_locals_keys: bool = False
 
         # Per-env tracking for screen wraps (same heuristic as logger wrapper)
@@ -123,6 +129,9 @@ class VideoOnXImproveCallback(BaseCallback):
         self._per_env_max_x = [0 for _ in range(n_envs)]
         self._per_env_actions: list[list[int]] = [[] for _ in range(n_envs)]
         self._per_env_goal_reached: list[bool] = [False for _ in range(n_envs)]
+        self._per_env_goal_x = [
+            None for _ in range(n_envs)
+        ]
         self._per_env_prev_hpos = [None for _ in range(n_envs)]
         self._per_env_screen_idx = [0 for _ in range(n_envs)]
         self._per_env_wrap_cooldown = [0 for _ in range(n_envs)]
@@ -199,6 +208,7 @@ class VideoOnXImproveCallback(BaseCallback):
             infos is None
             or dones is None
             or self._per_env_max_x is None
+            or self._per_env_goal_x is None
             or self._per_env_prev_hpos is None
             or self._per_env_screen_idx is None
             or self._per_env_wrap_cooldown is None
@@ -220,6 +230,7 @@ class VideoOnXImproveCallback(BaseCallback):
         ended_action_traces: list[list[int]] = []
         ended_episode_states: list[str] = []
         ended_goal_reached: list[bool] = []
+        ended_goal_x: list[Optional[int]] = []
 
         saw_level_switch = False
 
@@ -260,7 +271,14 @@ class VideoOnXImproveCallback(BaseCallback):
                 # when x>=goal_x.
                 try:
                     if info.get("goal_reached"):
+                        self._goal_only = True
                         self._per_env_goal_reached[env_i] = True
+                        gx = info.get("goal_x")
+                        if gx is not None:
+                            try:
+                                self._per_env_goal_x[env_i] = self._to_int(gx)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
@@ -296,9 +314,11 @@ class VideoOnXImproveCallback(BaseCallback):
                 ended_goal_reached.append(
                     bool(self._per_env_goal_reached[env_i])
                 )
+                ended_goal_x.append(self._per_env_goal_x[env_i])
                 self._per_env_max_x[env_i] = 0
                 self._per_env_actions[env_i].clear()
                 self._per_env_goal_reached[env_i] = False
+                self._per_env_goal_x[env_i] = None
 
                 # Reset per-env screen tracking for the next episode.
                 self._per_env_prev_hpos[env_i] = None
@@ -310,6 +330,7 @@ class VideoOnXImproveCallback(BaseCallback):
         # Do this even if no episode ended on this specific step.
         if saw_level_switch:
             self._best_x = None
+            self._goal_only = False
 
         if not ended_max_x:
             return True
@@ -324,38 +345,52 @@ class VideoOnXImproveCallback(BaseCallback):
         )
         self.logger.record("custom/max_x_episode_best_this_step", step_best_x)
 
-        # If an episode ended that had reached the goal at least once, record
-        # it
-        # as a new "attempt" video even if best_x did not improve (end-of-level
-        # x often plateaus).
-        if any(ended_goal_reached):
+        # Only record videos for episodes that actually reached the goal, and
+        # only when we can confirm max_x>=goal_x.
+        goal_candidate_idxs: list[int] = []
+        for i, gr in enumerate(ended_goal_reached):
+            if not bool(gr):
+                continue
+            gx = ended_goal_x[i]
+            if gx is None:
+                gx = self.fallback_goal_x
+            if gx is None:
+                continue
+            if int(ended_max_x[i]) >= int(gx):
+                goal_candidate_idxs.append(int(i))
+
+        if goal_candidate_idxs:
+            # Once the goal is reached at least once for the current level,
+            # switch to goal-only videos until a state switch resets us.
+            self._goal_only = True
+
+            # Record one goal video per callback step: pick the goal-reaching
+            # ended episode with the largest max_x.
+            best_i = max(
+                goal_candidate_idxs,
+                key=lambda i: int(ended_max_x[i]),
+            )
+            candidate_x = int(ended_max_x[best_i])
             try:
-                goal_idxs = [
-                    i for i, gr in enumerate(ended_goal_reached) if bool(gr)
-                ]
-                # Choose the goal episode with the largest max_x.
-                best_i = max(goal_idxs, key=lambda i: int(ended_max_x[i]))
                 trace = ended_action_traces[best_i]
                 state_label = (
                     ended_episode_states[best_i]
                     if best_i < len(ended_episode_states)
                     else "UnknownState"
                 )
-
                 short_level = _short_level_label(state_label)
                 trigger_ep = int(self._episodes_total)
-
                 self._record_video(
-                    int(ended_max_x[best_i]),
+                    candidate_x,
                     action_trace=trace,
                     state_label=state_label,
                     episode_num=trigger_ep,
                     level_name=short_level,
                 )
-
-                # Reset baseline so a repeated playthrough can trigger videos
-                # again.
-                self._best_x = None
+                self.logger.record(
+                    "custom/x_video_trigger_best_x",
+                    float(candidate_x),
+                )
             except Exception as e:
                 if self.verbose:
                     print(
@@ -364,10 +399,17 @@ class VideoOnXImproveCallback(BaseCallback):
                     )
             return True
 
+        # No goal-qualified episode ended on this step.
+        if self._goal_only:
+            return True
+
+        # Pre-goal phase: record best-x improvement videos.
         if self._best_x is None:
             self._best_x = step_best_x
             self.logger.record("custom/x_video_baseline", float(self._best_x))
             return True
+
+        self.logger.record("custom/x_video_baseline", float(self._best_x))
 
         # Avoid spamming early; let the policy stabilize first.
         if self._episodes_total < self.min_episodes_before_trigger:
@@ -375,7 +417,6 @@ class VideoOnXImproveCallback(BaseCallback):
 
         if step_best_x >= int(self._best_x) + max(1, self.min_improvement_x):
             try:
-                # Record the *actual* episode by replaying its action trace.
                 best_i = int(
                     np.argmax(np.asarray(ended_max_x, dtype=np.int64))
                 )
@@ -394,7 +435,7 @@ class VideoOnXImproveCallback(BaseCallback):
                     episode_num=trigger_ep,
                     level_name=short_level,
                 )
-                self._best_x = step_best_x
+                self._best_x = int(step_best_x)
                 self.logger.record(
                     "custom/x_video_trigger_best_x",
                     float(step_best_x),
