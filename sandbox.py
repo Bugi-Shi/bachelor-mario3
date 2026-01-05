@@ -22,6 +22,24 @@ from utils.deaths.plot_deaths_overlay_all import (
 from utils.run_dir import create_run_dir
 
 
+def _make_env(*, rank: int, custom_data_root: str, run_dir: Path):
+    """Factory for one Retro env instance.
+
+    SubprocVecEnv expects a list of callables that create environments.
+    Using an explicit helper makes it clear that each worker gets its own
+    fixed `rank` (instead of accidentally capturing the loop variable).
+    """
+
+    def _init():
+        return mariobros3_env(
+            custom_data_root,
+            rank=rank,
+            run_dir=str(run_dir),
+        )
+
+    return _init
+
+
 def _safe_close_env(env) -> None:
     if env is None:
         return
@@ -73,7 +91,7 @@ def generate_death_artifacts(*, run_dir: Path) -> None:
 
 def train_ppo(*, profile: str = "laptop") -> None:
     max_steps = 10_000_000
-    n_stack = 4
+    frame_stack = 4
     custom_data_root = str(Path(__file__).resolve().parent / "retro_custom")
 
     if profile not in {"laptop", "pc"}:
@@ -130,19 +148,14 @@ def train_ppo(*, profile: str = "laptop") -> None:
     shared_switch_path = str(Path(run_dir) / "level_switch.json")
 
     venv = QuietSubprocVecEnv(
-        [
-            lambda i=i, rd=str(run_dir): mariobros3_env(
-                custom_data_root,
-                rank=i,
-                run_dir=rd,
-            )
-            for i in range(n_envs)
-        ]
+        [_make_env(rank=i,
+                   custom_data_root=custom_data_root,
+                   run_dir=run_dir) for i in range(n_envs)]
     )
     # Adds `info['episode']` with episode reward/length and standardizes
     # episode boundary bookkeeping for vectorized envs.
     venv = VecMonitor(venv)
-    venv = VecFrameStack(venv, n_stack=n_stack)
+    venv = VecFrameStack(venv, n_stack=frame_stack)
 
     tb_logdir = str(run_dir / "tb")
 
@@ -203,7 +216,7 @@ def train_ppo(*, profile: str = "laptop") -> None:
                     VideoOnXImproveCallback(
                         custom_data_root=custom_data_root,
                         out_dir=videos_dir,
-                        n_stack=n_stack,
+                        n_stack=frame_stack,
                         min_improvement_x=1,
                         min_episodes_before_trigger=0,
                         video_length_steps=1500,
