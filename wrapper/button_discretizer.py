@@ -38,18 +38,18 @@ class ButtonDiscretizerWrapper(gym.ActionWrapper):
         tuple(),
     )
 
-    def __init__(self, env):
+    def __init__(self, env: gym.Env):
         super().__init__(env)
-        button_to_idx = {b: i for i, b in enumerate(self.BUTTONS)}
+        button_to_index = {name: i for i, name in enumerate(self.BUTTONS)}
 
-        self._actions = []
-        for action_buttons in self.ACTIONS:
-            arr = np.zeros((len(self.BUTTONS),), dtype=bool)
-            for button in action_buttons:
-                arr[button_to_idx[button]] = True
-            self._actions.append(arr)
+        self._button_masks: list[np.ndarray] = []
+        for pressed_buttons in self.ACTIONS:
+            mask = np.zeros((len(self.BUTTONS),), dtype=bool)
+            for button_name in pressed_buttons:
+                mask[button_to_index[button_name]] = True
+            self._button_masks.append(mask)
 
-        self.action_space = gym.spaces.Discrete(len(self._actions))
+        self.action_space = gym.spaces.Discrete(len(self._button_masks))
 
-    def action(self, a):
-        return self._actions[a]
+    def action(self, action_index: int) -> np.ndarray:
+        return self._button_masks[action_index]

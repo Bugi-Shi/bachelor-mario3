@@ -7,6 +7,8 @@ from typing import Optional
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
+from utils import to_python_int
+
 
 class MaxHposPerEpisodeCallback(BaseCallback):
     """Tracks max `info['hpos']` per episode and saves it.
@@ -173,10 +175,8 @@ class MaxHposPerEpisodeCallback(BaseCallback):
 
     @staticmethod
     def _to_int(value) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return int(np.asarray(value).item())
+        # Backwards-compatible alias (older code paths might still call this).
+        return to_python_int(value)
 
     def _init_callback(self) -> None:
         n_envs = int(getattr(self.training_env, "num_envs", 1))
@@ -261,9 +261,9 @@ class MaxHposPerEpisodeCallback(BaseCallback):
 
             hpos = info.get("hpos") if isinstance(info, dict) else None
             if hpos is not None:
-                cur = self._to_int(hpos)
-                if cur > self._per_env_max_hpos[env_i]:
-                    self._per_env_max_hpos[env_i] = cur
+                cur_hpos = to_python_int(hpos)
+                if cur_hpos > self._per_env_max_hpos[env_i]:
+                    self._per_env_max_hpos[env_i] = cur_hpos
 
             cur_x = self._extract_global_x(info)
             if cur_x is not None and cur_x > self._per_env_max_x[env_i]:
@@ -320,10 +320,12 @@ class MaxHposPerEpisodeCallback(BaseCallback):
                         else "Unknown"
                     )
                     key = (int(env_i), str(level_code))
-                    attempt = int(self._per_env_level_attempt.get(key, 0)) + 1
-                    self._per_env_level_attempt[key] = int(attempt)
+                    attempt_num = (
+                        int(self._per_env_level_attempt.get(key, 0)) + 1
+                    )
+                    self._per_env_level_attempt[key] = int(attempt_num)
                     self._append_goal_cleared(
-                        versuch=attempt,
+                        versuch=attempt_num,
                         env_i=int(env_i),
                         episode=int(self._episode_idx),
                         level=str(level_code),

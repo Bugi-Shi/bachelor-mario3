@@ -1,13 +1,19 @@
+from __future__ import annotations
+
+from typing import Any
+
 import gymnasium as gym
 import numpy as np
 from PIL import Image
 
 
 class GrayscaleResizeObservationWrapper(gym.ObservationWrapper):
-    def __init__(self, env, width: int = 84, height: int = 84):
+    """Converts RGB observations to grayscale and resizes to (H, W, 1)."""
+
+    def __init__(self, env: gym.Env, width: int = 84, height: int = 84):
         super().__init__(env)
-        self.width = int(width)
-        self.height = int(height)
+        self.width: int = int(width)
+        self.height: int = int(height)
 
         self.observation_space = gym.spaces.Box(
             low=0,
@@ -16,7 +22,7 @@ class GrayscaleResizeObservationWrapper(gym.ObservationWrapper):
             dtype=np.uint8,
         )
 
-    def observation(self, observation):
+    def observation(self, observation: Any) -> np.ndarray:
         obs = np.asarray(observation)
 
         if obs.dtype != np.uint8:
@@ -28,24 +34,27 @@ class GrayscaleResizeObservationWrapper(gym.ObservationWrapper):
             obs = obs.astype(np.uint8)
 
         if obs.ndim == 3 and obs.shape[2] == 1:
-            gray = obs[:, :, 0]
+            gray_2d = obs[:, :, 0]
         elif obs.ndim == 3:
             gray_img = Image.fromarray(obs).convert("L")
-            gray = np.asarray(gray_img, dtype=np.uint8)
+            gray_2d = np.asarray(gray_img, dtype=np.uint8)
         elif obs.ndim == 2:
-            gray = obs
+            gray_2d = obs
         else:
             raise ValueError(f"Unexpected observation shape: {obs.shape}")
 
-        resampling = getattr(Image, "Resampling", None)
-        if resampling is not None:
-            resample = resampling.BILINEAR
-        else:
-            resample = getattr(Image, "BILINEAR")
-
-        img = Image.fromarray(gray, mode="L").resize(
+        img = Image.fromarray(gray_2d, mode="L").resize(
             (self.width, self.height),
-            resample=resample,
+            resample=_pil_bilinear_resample(),
         )
-        out = np.asarray(img, dtype=np.uint8)
-        return out[:, :, None]
+        resized_gray = np.asarray(img, dtype=np.uint8)
+        return resized_gray[:, :, None]
+
+
+def _pil_bilinear_resample() -> int:
+    """Return the PIL bilinear resampling enum across Pillow versions."""
+
+    resampling = getattr(Image, "Resampling", None)
+    if resampling is not None:
+        return int(resampling.BILINEAR)
+    return int(getattr(Image, "BILINEAR"))

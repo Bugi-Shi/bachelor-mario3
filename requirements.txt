@@ -1,7 +1,6 @@
 # Runtime dependencies (top-level).
 # For fully reproducible installs (exact versions), use requirements-lock.txt.
 
-stable-retro==0.9.6
 stable_baselines3==2.4.1
 
 gym-retro==0.8.0

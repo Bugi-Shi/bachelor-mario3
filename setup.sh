@@ -56,11 +56,4 @@ if [[ -f "$REQ_DEV_FILE" ]]; then
 	"$VENV_PY" -m pip install -r "$REQ_DEV_FILE"
 fi
 
-# Optional: if a local stable-retro checkout exists, install it editable.
-# This can be useful when you need the repo's tooling/data layout.
-if [[ -d "stable-retro" ]]; then
-	echo ">>> Found ./stable-retro (installing editable)"
-	"$VENV_PY" -m pip install -e "./stable-retro"
-fi
-
 echo ">>> Done. Activate with: source $VENV_DIR/bin/activate"

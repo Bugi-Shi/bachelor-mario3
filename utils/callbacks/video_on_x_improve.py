@@ -7,6 +7,7 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 from .video_replay import record_replay_video
+from utils import to_python_int
 
 
 def _state_label(raw_state: Optional[object]) -> str:
@@ -116,13 +117,6 @@ class VideoOnXImproveCallback(BaseCallback):
         self._per_env_screen_idx: Optional[list[int]] = None
         self._per_env_wrap_cooldown: Optional[list[int]] = None
 
-    @staticmethod
-    def _to_int(value) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return int(np.asarray(value).item())
-
     def _init_callback(self) -> None:
         Path(self.out_dir).mkdir(parents=True, exist_ok=True)
         n_envs = int(getattr(self.training_env, "num_envs", 1))
@@ -180,17 +174,17 @@ class VideoOnXImproveCallback(BaseCallback):
         world_x_hi = info.get("world_x_hi")
         if world_x_hi is not None:
             try:
-                hi = self._to_int(world_x_hi)
+                hi = to_python_int(world_x_hi)
             except Exception:
                 hi = None
             if hi is not None:
-                cur_hpos = self._to_int(hpos)
+                cur_hpos = to_python_int(hpos)
                 return int(hi * self.screen_width + cur_hpos)
 
         if self._per_env_screen_idx is None:
             return None
 
-        cur_hpos = self._to_int(hpos)
+        cur_hpos = to_python_int(hpos)
         self._maybe_advance_screen(env_i=env_i, cur_hpos=cur_hpos, ended=ended)
         return int(
             self._per_env_screen_idx[env_i] * self.screen_width + cur_hpos
@@ -254,7 +248,7 @@ class VideoOnXImproveCallback(BaseCallback):
                 if acts.shape[0] >= n_envs:
                     for env_i in range(n_envs):
                         a_i = acts[env_i]
-                        a_int = self._to_int(a_i)
+                        a_int = to_python_int(a_i)
                         self._per_env_actions[env_i].append(int(a_int))
             except Exception:
                 pass
@@ -276,7 +270,7 @@ class VideoOnXImproveCallback(BaseCallback):
                         gx = info.get("goal_x")
                         if gx is not None:
                             try:
-                                self._per_env_goal_x[env_i] = self._to_int(gx)
+                                self._per_env_goal_x[env_i] = to_python_int(gx)
                             except Exception:
                                 pass
                 except Exception:
@@ -285,7 +279,7 @@ class VideoOnXImproveCallback(BaseCallback):
                 # Prefer wrapper-provided info['x'].
                 x_val = info.get("x")
                 if x_val is not None:
-                    cur_x = self._to_int(x_val)
+                    cur_x = to_python_int(x_val)
                 else:
                     # Fallback for setups without DeathPositionLoggerWrapper.
                     derived_x = self._derived_global_x(

@@ -1,27 +1,70 @@
-# Mario Reinforcement Learning – Setup (Minimal)
+# Mario Reinforcement Learning (SMB3) – Setup
 
-Dieses Projekt nutzt **stable-retro** und verschiedene RL-Algorithmen, um SuperMarioBros3-Nes-v0 zu trainieren und zu testen.
+Dieses Projekt trainiert einen PPO-Agenten (Stable-Baselines3) auf **SuperMarioBros3-Nes** mit **gym-retro**.
+Das Projekt benutzt einen **Custom-Integration-Ordner** unter `retro_custom/`, in dem ROM, States und Szenario/Reward-Definitionen liegen.
+**Wichtig:** Die Rom muss selber intergriert werden!
 
 ---
 
-## Setup (WSL2 Ubuntu 22.04)
+## Setup: WSL2 Ubuntu 22.04 (Windows)
+
+### 1) WSL Ubuntu 22.04 installieren
+
+In Windows PowerShell (als Admin):
 
 ```bash
 wsl --install -d Ubuntu-22.04
 ```
 
-### 1. Systempakete installieren
+Danach Ubuntu starten (Startmenü: „Ubuntu 22.04“), Benutzer anlegen und ein Update machen:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+### 2) Systempakete (Ubuntu) installieren
 
 ```bash
 sudo apt update
-sudo apt-get install -y python3 python3-pip python3-venv python-is-python3 \
-	python3-opengl git build-essential zlib1g-dev libopenmpi-dev ffmpeg cmake
+sudo apt-get install -y \
+  git build-essential cmake ffmpeg pkg-config \
+  zlib1g-dev libgl1 libglib2.0-0 \
+  python3-pip
+```
 
-# integration tool (optional)
+Optional (nur für das Qt-GUI Tool `gym-retro-integration`):
+
+```bash
 sudo apt-get install -y capnproto libcapnp-dev libqt5opengl5-dev qtbase5-dev
 ```
 
-### 2. Repository klonen
+### 3) Python 3.8 installieren (Ubuntu 22.04)
+
+Ubuntu 22.04 bringt standardmäßig Python 3.10 mit. Für dieses Repo wird **Python 3.8** genutzt.
+
+Wenn `python3.8` bei dir schon verfügbar ist, brauchst du oft nur das venv-Modul:
+
+```bash
+sudo apt update
+sudo apt-get install -y python3.8-venv python3.8-dev
+```
+
+Falls Ubuntu die Pakete nicht findet (typisch auf 22.04 ohne Zusatz-Repos), nutze das deadsnakes PPA:
+
+```bash
+sudo apt-get install -y software-properties-common
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+sudo apt-get install -y python3.8 python3.8-venv python3.8-dev
+```
+
+Wenn du Python 3.8 bereits anders installiert hast (z.B. `pyenv`), ist das auch ok – Hauptsache `python3.8` ist verfügbar.
+
+---
+
+## Projekt installieren (virtuelle Umgebung)
+
+### 1) Repo klonen
 
 ```bash
 cd ~
@@ -29,80 +72,79 @@ git clone git@github.com:Bugi-Shi/bachelor-mario3.git bachelor
 cd bachelor
 ```
 
-### 3. stable-retro klonen (optional)
+### 2) Virtuelle Umgebung (Python 3.8) erstellen & Dependencies installieren
 
-Nur nötig, wenn du lokal an stable-retro arbeiten willst oder deren Tooling
-brauchst. `setup.sh` installiert es dann automatisch editable, falls
-`./stable-retro/` existiert.
+Das Repo enthält ein Setup-Skript, das eine venv unter `project/` erstellt und alle Pakete per `pip` installiert:
 
-```bash
-git clone https://github.com/Farama-Foundation/stable-retro.git
-```
+Wichtigste Python-Pakete, die dabei installiert werden (Auszug):
 
-### 4. Setup-Skript ausführen (automatisiert)
+- `gym-retro` (liefert `retro`)
+- `gymnasium`
+- `stable_baselines3` (PPO)
+- `torch`
+- `numpy`, `pandas`
+- `tensorboard`
+- `opencv-python`, `matplotlib`
 
-Das Projekt enthält ein Skript setup.sh, das:
-- eine virtuelle Umgebung erstellt
-- Pakete installiert
-- optional `stable-retro` als Editable installiert (falls `./stable-retro/` existiert)
+Die vollständige, gepinnte Liste steht in `requirements-lock.txt`.
 
-**Skript ausführen:**
 ```bash
 chmod +x setup.sh
 ./setup.sh
 ```
 
-**Danach kann die Umgebung jederzeit wieder aktiviert werden:**
+Aktivieren:
+
 ```bash
 source project/bin/activate
 ```
 
+Hinweise:
+- `setup.sh` nutzt standardmäßig `python3.8` und installiert standardmäßig aus `requirements-lock.txt`.
+- Falls dein Python-Binary anders heißt, kannst du es setzen: `PYTHON_BIN=/pfad/zu/python3.8 ./setup.sh`
+
 ---
 
-## Setup (Allgemein / auf jedem Rechner)
+## gym-retro + Custom-Ordner (`retro_custom/`)
 
-Minimaler Ablauf für andere Personen:
+### Was wird benutzt?
 
-1) Repo klonen
-2) Python **3.8** installieren (inkl. venv-Modul)
-3) `./setup.sh` ausführen (erstellt `project/` venv und installiert Dependencies)
-4) Starten mit `./project/bin/python -u main.py`
+- **gym-retro** liefert das Python-Modul `retro`.
+- Das Environment wird so gebaut, dass **nur** deine Custom-Integration verwendet wird (`CUSTOM_ONLY`).
+- Der Pfad zur Custom-Integration ist im Training standardmäßig:
+  - `retro_custom/` (siehe `custom_data_root` in `sandbox.py`).
 
-Wichtig:
-- `requirements.txt` = Laufzeit-Dependencies (Top-Level)
-- `requirements-lock.txt` = *Freeze/Lock* (exakte Versionen). `setup.sh` nutzt standardmäßig das Lock-File.
+### Erwartete Ordnerstruktur
 
-Wenn `pip install` bei jemandem fehlschlägt, fehlen meist System-Libs (OpenGL/SDL/ffmpeg). Unter Ubuntu/Debian ist diese Liste oft ausreichend:
+Die Custom-Daten liegen unter:
+
+`retro_custom/SuperMarioBros3-Nes/`
+
+Typischer Inhalt (Beispiele aus diesem Repo):
+
+- `rom.nes` und `rom.sha`
+- `metadata.json` (enthält u.a. `default_state`)
+- `scenario.json` / `data.json`
+- `*.state` (z.B. `1Player.World1.Level1.state`, `1Player.World1.Level2_Pit.state`, ...)
+
+### ROM prüfen
+
+Im Ordner `retro_custom/SuperMarioBros3-Nes/`:
 
 ```bash
-sudo apt update
-sudo apt-get install -y \
-	python3.8 python3.8-venv python3-pip \
-	python3-opengl ffmpeg cmake \
-	zlib1g-dev \
-	libgl1 libglib2.0-0
-```
-
-### 5. ROM hinzufügen und umwandeln (manuell)
-rom.nes -> stable-retro/retro/data/stable/SuperMarioBros3-Nes-v0 verschieben
-
 cat rom.sha
 sha1sum rom.nes
+```
 
--> müssen gleich sein
+Die Checksums sollten übereinstimmen.
 
-### 6. Projekt starten
+---
 
-#### Training ausführen
-
-Am einfachsten startest du das Training über den Einstiegspunkt:
+## Training starten
 
 ```bash
 # (empfohlen) venv-python direkt nutzen
 ./project/bin/python -u main.py
-
-# alternativ (wenn venv aktiv ist)
-python -u main.py
 
 # Profile:
 ./project/bin/python -u main.py --laptop

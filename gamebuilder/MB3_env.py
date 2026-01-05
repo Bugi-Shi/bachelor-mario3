@@ -79,6 +79,7 @@ def mariobros3_env(
     env = NoHposProgressGuardWrapper(
         env,
         max_no_progress_steps=max(1, 480 // frame_skip),
+        disable_penalty_after_x=2650,
     )
     env = ButtonDiscretizerWrapper(env)
 
@@ -92,7 +93,14 @@ def mariobros3_env(
             project_root = Path(custom_data_root).resolve().parent
             deaths_dir = project_root / "outputs" / "deaths"
         log_path = deaths_dir / f"deaths_env{rank}.jsonl"
-        env = DeathPositionLoggerWrapper(env, log_path=str(log_path))
+        env = DeathPositionLoggerWrapper(
+            env,
+            log_path=str(log_path),
+            # Neutralize the Retro scenario life-loss penalty once the agent
+            # has essentially reached the end-of-level goal.
+            cancel_life_loss_penalty_after_x=2650,
+            life_loss_penalty_value=100.0,
+        )
 
     # Big reward at the end-of-level goal and switch future resets to Level 3.
     if run_dir:

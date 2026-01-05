@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Optional
 
 import gymnasium as gym
-import numpy as np
+
+from utils import to_python_int_or_none
 
 
 class DeathPositionLoggerWrapper(gym.Wrapper):
@@ -35,6 +38,8 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         env: gym.Env,
         *,
         log_path: str,
+        cancel_life_loss_penalty_after_x: Optional[int] = None,
+        life_loss_penalty_value: float = 100.0,
         screen_width: int = 256,
         wrap_threshold: int = 50,
         wrap_prev_min: int = 200,
@@ -44,6 +49,12 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
     ):
         super().__init__(env)
         self.log_path = Path(log_path)
+        self.cancel_life_loss_penalty_after_x = (
+            int(cancel_life_loss_penalty_after_x)
+            if cancel_life_loss_penalty_after_x is not None
+            else None
+        )
+        self.life_loss_penalty_value = float(life_loss_penalty_value)
         self.screen_width = int(screen_width)
         self.wrap_threshold = int(wrap_threshold)
         self.wrap_prev_min = int(wrap_prev_min)
@@ -145,15 +156,6 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         # RAM value looks implausible; stick to heuristic.
         return int(self._screen_idx)
 
-    @staticmethod
-    def _to_int(value) -> Optional[int]:
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except Exception:
-            return int(np.asarray(value).item())
-
     def _maybe_advance_screen(
         self, cur_hpos: Optional[int], ended: bool
     ) -> None:
@@ -186,9 +188,9 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         ended = bool(terminated or truncated)
 
-        cur_hpos = self._to_int(info.get("hpos"))
-        cur_lives = self._to_int(info.get("lives"))
-        cur_world_x_hi = self._to_int(info.get("world_x_hi"))
+        cur_hpos = to_python_int_or_none(info.get("hpos"))
+        cur_lives = to_python_int_or_none(info.get("lives"))
+        cur_world_x_hi = to_python_int_or_none(info.get("world_x_hi"))
 
         life_lost_by_lives = False
         if cur_lives is not None:
@@ -224,6 +226,24 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
             reason = "life_lost"
         elif info.get("no_hpos_progress_terminated"):
             reason = "stuck"
+
+        # Terminal frames often have a bogus position signal (e.g. hpos=0).
+        # Prefer the last known pre-terminal global x for downstream logic.
+        x_pre_terminal = self._last_global_x
+        if ended and x_pre_terminal is not None:
+            info = dict(info)
+            info["x"] = int(x_pre_terminal)
+
+        # Optionally cancel the Retro scenario life-loss penalty after
+        # reaching a certain progress threshold.
+        if (
+            reason == "life_lost"
+            and self.cancel_life_loss_penalty_after_x is not None
+            and x_pre_terminal is not None
+            and int(x_pre_terminal)
+            > int(self.cancel_life_loss_penalty_after_x)
+        ):
+            reward = float(reward) + float(self.life_loss_penalty_value)
 
         should_log = bool(
             reason is not None and (ended or reason == "life_lost")

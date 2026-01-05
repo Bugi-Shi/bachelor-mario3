@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from contextlib import contextmanager
 from typing import Any, Mapping, Optional
 
-from tempfile import NamedTemporaryFile
-
-from contextlib import contextmanager
-
 import gymnasium as gym
-import numpy as np
 
 from wrapper.reset_by_death import ResetToDefaultStateByDeathWrapper
+from utils import to_python_int_or_none
 
 
 def _normalize_state_name(state: str) -> str:
@@ -151,15 +149,6 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         except Exception:
             return {}
 
-    @staticmethod
-    def _to_int(value) -> Optional[int]:
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except Exception:
-            return int(np.asarray(value).item())
-
     def reset(self, **kwargs):
         self._goal_reward_given = False
         self._goal_success_counted = False
@@ -268,7 +257,7 @@ class GoalRewardAndStateSwitchWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
 
         info = dict(info)
-        x_val = self._to_int(info.get("x"))
+        x_val = to_python_int_or_none(info.get("x"))
 
         if self._pending_switch_info:
             self._pending_switch_info = False
