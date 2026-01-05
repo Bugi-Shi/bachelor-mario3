@@ -151,6 +151,8 @@ Die Checksums sollten übereinstimmen.
 ./project/bin/python -u main.py --pc
 ```
 
+![Agent](assets/agent.jpg)
+
 Beim Start wird automatisch ein neuer Run-Ordner unter `outputs/runs/<YYYY-MM-DD_HH-MM-SS>/` angelegt. Dort landen u.a.:
 
 - `tb/` – TensorBoard Event-Files (für Metriken/Scalars)
@@ -241,27 +243,3 @@ Wenn du in WSL/Remote arbeitest und von außen zugreifen willst, nutze zusätzli
 ```bash
 ./project/bin/tensorboard --logdir outputs/runs --port 6006 --bind_all
 ```
-
-### 7. Projektstruktur
-bachelor/
-│── .vscode/             # VS Code workspace settings & extension recommendations
-│── assets/              # Bilder/Level-Assets (z.B. Overlay-Base)
-│── gamebuilder/         # Environment-Factory (z.B. MB3_env.py)
-│── external/            # Vendor/Build (z.B. gym-retro checkout/build)
-│── wrapper/             # Gym/Retro-Wrapper (Preprocessing, Death-Logger, etc.)
-│── utils/               # Callbacks, Run-Management, Plot/Overlay, Aggregation
-│   └── pretty_terminal/  # Ctrl+C/Gym-Banner "quiet" helpers
-│── outputs/             # Trainingsartefakte (Runs, TensorBoard, CSV, Death-Logs)
-│── retro_custom/        # Custom Retro-Data/Configs (falls genutzt)
-│── tools/               # Helper scripts (z.B. retro_integration)
-│── project/             # Python virtual environment (venv)
-│── main.py              # Einstiegspunkt (Training starten)
-│── sandbox.py           # PPO-Training (Stable-Baselines3)
-│── ppo_super_mario_bros3.zip # gespeichertes Modell (Beispiel/Checkpoint)
-│── setup.sh             # Automatisches Installationsskript (venv + Abhängigkeiten)
-│── requirements.txt     # Laufzeit-Dependencies
-│── requirements-dev.txt # Developer-Tools (Format/Lint)
-│── requirements-lock.txt# Gepinnte Versionen (z.B. tensorboard)
-│── .ruff.toml           # Ruff-Konfiguration (Formatierung/Linting)
-│── .gitignore
-└── README.md
