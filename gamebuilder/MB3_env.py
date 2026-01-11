@@ -10,11 +10,10 @@ from gymnasium.wrappers import MaxAndSkipObservation
 from wrapper.button_discretizer import ButtonDiscretizerWrapper
 from wrapper.no_progess_penalty import NoHposProgressGuardWrapper
 from wrapper.reset_by_death import ResetToDefaultStateByDeathWrapper
-from wrapper.obs_preprocess import GrayscaleResizeObservationWrapper
+from wrapper.grayscale_resizer import GrayscaleResizeObservationWrapper
 from wrapper.death_position_logger import DeathPositionLoggerWrapper
-from wrapper.goal_reward_and_state_switch import (
-    GoalRewardAndStateSwitchWrapper,
-)
+from wrapper.best_x_reward import BestXRewardWrapper
+from wrapper.goal_reward import GoalRewardWrapper
 
 
 def _state_exists(custom_data_root: str, state_name: str) -> bool:
@@ -96,47 +95,21 @@ def mariobros3_env(
         env = DeathPositionLoggerWrapper(
             env,
             log_path=str(log_path),
-            # Neutralize the Retro scenario life-loss penalty once the agent
-            # has essentially reached the end-of-level goal.
             cancel_life_loss_penalty_after_x=2650,
             life_loss_penalty_value=100.0,
+            level_label="1-1",
         )
 
-    # Big reward at the end-of-level goal and switch future resets to Level 3.
-    if run_dir:
-        shared_switch_path = str(Path(run_dir) / "level_switch.json")
-    else:
-        project_root = Path(custom_data_root).resolve().parent
-        shared_switch_path = str(
-            project_root / "outputs" / "level_switch.json"
-        )
+    # Bonus reward whenever the agent reaches a new best global X in-episode.
+    # Requires info['x'] (provided by DeathPositionLoggerWrapper).
+    env = BestXRewardWrapper(env, bonus=50.0, min_improvement_px=10)
 
-    # Optional curriculum shortcut for the Level 1-2 pit bottleneck.
-    # If a custom state exists, we start Level 2 from there instead of the
-    # beginning of the level.
-    level2_pit_state = "1Player.World1.Level2_Pit"
-    next_from_level1 = (
-        level2_pit_state
-        if _state_exists(custom_data_root, level2_pit_state)
-        else "1Player.World1.Level2"
-    )
-
-    env = GoalRewardAndStateSwitchWrapper(
+    # Big reward at the end-of-level goal.
+    env = GoalRewardWrapper(
         env,
         goal_x=2685,
-        goal_x_by_episode_state={
-            "1Player.World1.Level3": 2440,
-        },
         goal_reward=500.0,
-        required_successes=3,
-        commit_switch=False,
         emit_candidate_info=True,
-        next_state_by_episode_state={
-            "1Player.World1.Level1": next_from_level1,
-            "1Player.World1.Level2": "1Player.World1.Level3",
-            "1Player.World1.Level2_Pit": "1Player.World1.Level3",
-            "1Player.World1.Level3": "1Player.World1.Level6",
-        },
-        shared_switch_path=shared_switch_path,
+        candidate_next_state="LevelCleared",
     )
     return env

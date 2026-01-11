@@ -261,7 +261,7 @@ class VideoOnXImproveCallback(BaseCallback):
 
                 # Track whether the current episode reached the goal at least
                 # once.
-                # GoalRewardAndStateSwitchWrapper sets info['goal_reached']
+                # GoalRewardWrapper sets info['goal_reached']
                 # when x>=goal_x.
                 try:
                     if info.get("goal_reached"):

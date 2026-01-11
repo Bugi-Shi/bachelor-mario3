@@ -130,6 +130,13 @@ class QuietSubprocVecEnv(VecEnv):
         observation_space, action_space = self.remotes[0].recv()
         super().__init__(n_envs, observation_space, action_space)
 
+        # Propagate render_mode from the underlying env.
+        # SB3's BaseVecEnv.render warns if this is None.
+        try:
+            self.render_mode = self.get_attr("render_mode", indices=[0])[0]
+        except Exception:
+            self.render_mode = None
+
     def step_async(self, actions: np.ndarray) -> None:
         for remote, action in zip(self.remotes, actions):
             remote.send(("step", action))

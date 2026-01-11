@@ -126,7 +126,16 @@ def main() -> None:
     out_dir = Path(args.out).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    env = DummyVecEnv([lambda: mariobros3_env(str(custom_data_root), rank=0)])
+    render_mode = "human" if args.render_raw else "rgb_array"
+    env = DummyVecEnv(
+        [
+            lambda: mariobros3_env(
+                str(custom_data_root),
+                rank=0,
+                render_mode=render_mode,
+            )
+        ]
+    )
     env = VecMonitor(env)
     env = VecFrameStack(env, n_stack=int(args.n_stack))
 

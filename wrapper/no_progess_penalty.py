@@ -8,10 +8,7 @@ from utils import to_python_int
 
 
 class NoHposProgressGuardWrapper(gym.Wrapper):
-    """Adds a penalty when Mario is stuck and terminates after N stuck steps.
-
-    This merges the old "penalty" and "terminate" logic so you only have one
-    place to tune the behavior.
+    """Adds a penalty when Mario is terminates or is stuck after 8 seconds.
     """
 
     def __init__(
@@ -95,8 +92,7 @@ class NoHposProgressGuardWrapper(gym.Wrapper):
             self._no_progress_steps = 0
             return obs, reward, terminated, truncated, info
 
-        # "Stuck" means hpos is basically not changing
-        # (pipe jitter, hanging, etc.).
+        # "Stuck" means Mario hpos is not moving
         if abs(delta) <= self.jitter_tolerance:
             should_penalize = True
             if self.disable_penalty_after_x is not None:

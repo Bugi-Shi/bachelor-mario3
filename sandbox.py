@@ -35,6 +35,7 @@ def _make_env(*, rank: int, custom_data_root: str, run_dir: Path):
             custom_data_root,
             rank=rank,
             run_dir=str(run_dir),
+            render_mode="rgb_array",
         )
 
     return _init
@@ -106,7 +107,7 @@ def train_ppo(*, profile: str = "laptop") -> None:
         batch_size = 512
         n_epochs = 3
         learning_rate = 2e-4    # LR high for more exploration
-        ent_coef = 0.02         # Entropy coeff high for more exploration
+        ent_coef = 0.001         # Entropy coeff high for more exploration
         clip_range = 0.2
         gamma = 0.99
         gae_lambda = 0.95
@@ -191,8 +192,10 @@ def train_ppo(*, profile: str = "laptop") -> None:
                     ResetStatsCallback(),
                     GoalWindowGateCallback(
                         shared_switch_path=shared_switch_path,
+                        target_start_state="1Player.World1.Level1",
                         required_successes=3,
                         window_episodes=10,
+                        stop_training=True,
                         verbose=1,
                     ),
                     HyperparamSwitchOnLevelCallback(

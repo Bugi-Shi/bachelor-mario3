@@ -1,36 +1,21 @@
 from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import Optional
-
 import gymnasium as gym
-
 from utils import to_python_int_or_none
 
 
 class DeathPositionLoggerWrapper(gym.Wrapper):
-    """Logs (approx) death positions as JSONL.
+    """Logs death/stuck positions as JSONL and exposes a derived `info['x']`.
 
-    Logging happens on steps that end an episode where either:
-    - info['life_lost_terminated'] is True (or lives dropped)
-    - info['no_hpos_progress_terminated'] is True (optional, still logged)
-
-    Output schema (one JSON object per death):
-    - ep: per-env episode counter (starts at 1)
-    - reason: "life_lost" | "stuck"
-    - x: global x (the same value exposed as info['x'] and used by videos)
-    - level: short level code (e.g. "1-1", "1-3", "1-A", "1-MF")
-
-        Preferred position signal:
-        - If Retro provides `info['world_x_hi']` (a page/screen counter byte),
-            we compute global x directly as:
-
-                    global_x = world_x_hi * screen_width + hpos
-
-        Fallback:
-        - If `world_x_hi` is unavailable, we fall back to a heuristic that
-            detects hpos "wraps" and increments an internal screen index.
+    Minimal behavior:
+    - Derive a global X coordinate as: `x = world_x_hi * screen_width + hpos`
+      when those RAM signals exist.
+        - Fallback (if `world_x_hi` is missing): approximate a screen index by
+            detecting large `hpos` wraps.
+    - On terminal frames, prefer the last non-terminal `x`.
+    - If a death/stuck event is detected, append a JSONL record.
     """
 
     def __init__(
@@ -38,17 +23,14 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         env: gym.Env,
         *,
         log_path: str,
+        level_label: str = "1-1",
         cancel_life_loss_penalty_after_x: Optional[int] = None,
         life_loss_penalty_value: float = 100.0,
         screen_width: int = 256,
-        wrap_threshold: int = 50,
-        wrap_prev_min: int = 200,
-        wrap_cur_max: int = 60,
-        wrap_cooldown_steps: int = 15,
-        max_world_x_hi_delta: int = 2,
     ):
         super().__init__(env)
         self.log_path = Path(log_path)
+        self.level_label = str(level_label).strip() or "1-1"
         self.cancel_life_loss_penalty_after_x = (
             int(cancel_life_loss_penalty_after_x)
             if cancel_life_loss_penalty_after_x is not None
@@ -56,18 +38,11 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         )
         self.life_loss_penalty_value = float(life_loss_penalty_value)
         self.screen_width = int(screen_width)
-        self.wrap_threshold = int(wrap_threshold)
-        self.wrap_prev_min = int(wrap_prev_min)
-        self.wrap_cur_max = int(wrap_cur_max)
-        self.wrap_cooldown_steps = int(wrap_cooldown_steps)
-        self.max_world_x_hi_delta = int(max_world_x_hi_delta)
 
         self._prev_hpos: Optional[int] = None
-        self._prev_lives: Optional[int] = None
         self._screen_idx: int = 0
-        self._wrap_cooldown: int = 0
+        self._prev_lives: Optional[int] = None
         self._last_global_x: Optional[int] = None
-        self._last_hpos: Optional[int] = None
         self._logged_this_episode: bool = False
         self._episode_idx: int = 0
         self._episode_num: int = 0
@@ -76,108 +51,36 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         self._episode_idx += 1
         self._episode_num = int(self._episode_idx)
         self._prev_hpos = None
-        self._prev_lives = None
         self._screen_idx = 0
-        self._wrap_cooldown = 0
+        self._prev_lives = None
         self._last_global_x = None
-        self._last_hpos = None
         self._logged_this_episode = False
         return self.env.reset(**kwargs)
 
-    @staticmethod
-    def _level_code(raw_state: Optional[object]) -> str:
-        """Return a short level code like '1-1' / '1-A' / '1-MF'."""
-
-        if raw_state is None:
-            return "Unknown"
-
-        s = str(raw_state).strip()
-        if not s:
-            return "Unknown"
-
-        name = Path(s).name
-        if name.endswith(".state"):
-            name = name[: -len(".state")]
-        if name.startswith("1Player."):
-            name = name[len("1Player."):]
-
-        # Expect patterns like:
-        #   World1.Level3
-        #   World1.Airship
-        #   World1.MiniFortress
-        # but be tolerant to other variants.
-        import re
-
-        m_world = re.search(r"World(?P<w>\d+)", name)
-        world = m_world.group("w") if m_world else "1"
-
-        if re.search(r"Airship", name, flags=re.IGNORECASE):
-            return f"{world}-A"
-        if re.search(r"MiniFortress", name, flags=re.IGNORECASE):
-            return f"{world}-MF"
-
-        m_level = re.search(r"Level(?P<l>\d+)", name)
-        if m_level:
-            return f"{world}-{m_level.group('l')}"
-
-        return "Unknown"
-
-    def _choose_screen_idx(
-        self,
-        *,
-        cur_hpos: Optional[int],
-        cur_world_x_hi: Optional[int],
-        ended: bool,
-    ) -> Optional[int]:
-        """Return the best-available screen index for computing global X.
-
-        Strategy:
-        - Always keep the wrap-based heuristic updated.
-        - Prefer cur_world_x_hi only if it is close to the heuristic screen
-          index (guards against occasional bogus RAM reads).
-        """
-
-        self._maybe_advance_screen(cur_hpos, ended=ended)
-
-        if cur_hpos is None:
+    def _compute_global_x(self, info: dict, *, ended: bool) -> Optional[int]:
+        hpos = to_python_int_or_none(info.get("hpos"))
+        world_x_hi = to_python_int_or_none(info.get("world_x_hi"))
+        if hpos is None:
             return None
 
-        if cur_world_x_hi is None:
-            return int(self._screen_idx)
+        # Preferred: use Retro's page counter when available.
+        if world_x_hi is not None:
+            if not ended:
+                self._screen_idx = int(world_x_hi)
+                self._prev_hpos = int(hpos)
+            return int(int(world_x_hi) * int(self.screen_width) + int(hpos))
 
-        if (
-            abs(int(cur_world_x_hi) - int(self._screen_idx))
-            <= self.max_world_x_hi_delta
-        ):
-            # Sync heuristic to RAM page counter when it looks sane.
-            self._screen_idx = int(cur_world_x_hi)
-            return int(cur_world_x_hi)
+        # Fallback: approximate page transitions by detecting hpos wraps.
+        # Kept intentionally simple (good enough as a backup signal).
+        if not ended:
+            if self._prev_hpos is not None:
+                prev = int(self._prev_hpos)
+                cur = int(hpos)
+                if cur + 50 < prev and prev >= 200 and cur <= 60:
+                    self._screen_idx += 1
+            self._prev_hpos = int(hpos)
 
-        # RAM value looks implausible; stick to heuristic.
-        return int(self._screen_idx)
-
-    def _maybe_advance_screen(
-        self, cur_hpos: Optional[int], ended: bool
-    ) -> None:
-        if ended or cur_hpos is None:
-            return
-
-        if self._wrap_cooldown > 0:
-            self._wrap_cooldown -= 1
-
-        if self._prev_hpos is None:
-            self._prev_hpos = cur_hpos
-            return
-        # Heuristic: large drop without episode end -> likely screen boundary.
-        if (
-            self._wrap_cooldown == 0
-            and cur_hpos + self.wrap_threshold < self._prev_hpos
-            and self._prev_hpos >= self.wrap_prev_min
-            and cur_hpos <= self.wrap_cur_max
-        ):
-            self._screen_idx += 1
-            self._wrap_cooldown = self.wrap_cooldown_steps
-        self._prev_hpos = cur_hpos
+        return int(int(self._screen_idx) * int(self.screen_width) + int(hpos))
 
     def _write(self, obj: dict) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,9 +91,7 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         ended = bool(terminated or truncated)
 
-        cur_hpos = to_python_int_or_none(info.get("hpos"))
         cur_lives = to_python_int_or_none(info.get("lives"))
-        cur_world_x_hi = to_python_int_or_none(info.get("world_x_hi"))
 
         life_lost_by_lives = False
         if cur_lives is not None:
@@ -198,41 +99,28 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
                 life_lost_by_lives = True
             self._prev_lives = cur_lives
 
-        chosen_screen_idx = self._choose_screen_idx(
-            cur_hpos=cur_hpos, cur_world_x_hi=cur_world_x_hi, ended=ended
-        )
-
-        # Expose derived position info to downstream consumers.
-        if cur_hpos is not None and chosen_screen_idx is not None:
-            info = dict(info)
-            info["screen_idx"] = int(chosen_screen_idx)
-            info["x"] = int(
-                int(chosen_screen_idx) * self.screen_width + int(cur_hpos)
-            )
+        info_out = dict(info)
+        cur_global_x = self._compute_global_x(info_out, ended=ended)
+        if cur_global_x is not None:
+            info_out["x"] = int(cur_global_x)
 
         # Track last meaningful position BEFORE terminal frames.
-        # On life loss the last frame often has hpos=0 (respawn), which we
-        # don't want to overwrite.
-        if not ended and cur_hpos is not None:
-            self._last_hpos = int(cur_hpos)
-            if chosen_screen_idx is not None:
-                self._last_global_x = int(
-                    int(chosen_screen_idx) * self.screen_width + int(cur_hpos)
-                )
+        # (Terminal frames can have bogus values after respawn.)
+        if not ended and cur_global_x is not None:
+            self._last_global_x = int(cur_global_x)
 
         # Decide whether to log and why.
         reason = None
-        if info.get("life_lost_terminated") or life_lost_by_lives:
+        if info_out.get("life_lost_terminated") or life_lost_by_lives:
             reason = "life_lost"
-        elif info.get("no_hpos_progress_terminated"):
+        elif info_out.get("no_hpos_progress_terminated"):
             reason = "stuck"
 
         # Terminal frames often have a bogus position signal (e.g. hpos=0).
         # Prefer the last known pre-terminal global x for downstream logic.
         x_pre_terminal = self._last_global_x
         if ended and x_pre_terminal is not None:
-            info = dict(info)
-            info["x"] = int(x_pre_terminal)
+            info_out["x"] = int(x_pre_terminal)
 
         # Optionally cancel the Retro scenario life-loss penalty after
         # reaching a certain progress threshold.
@@ -252,23 +140,20 @@ class DeathPositionLoggerWrapper(gym.Wrapper):
             # Prefer last known pre-terminal position.
             global_x = self._last_global_x
 
-            # Fallbacks if we never captured a pre-terminal position.
-            if global_x is None and cur_hpos is not None:
-                global_x = int(
-                    self._screen_idx * self.screen_width + int(cur_hpos)
-                )
+            # Fallback: best-effort current x, otherwise 0.
+            if global_x is None:
+                global_x = cur_global_x
             if global_x is None:
                 global_x = 0
 
-            level = self._level_code(info.get("episode_state"))
             self._write(
                 {
                     "ep": int(self._episode_num),
                     "reason": reason,
                     "x": int(global_x),
-                    "level": level,
+                    "level": self.level_label,
                 }
             )
             self._logged_this_episode = True
 
-        return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, info_out

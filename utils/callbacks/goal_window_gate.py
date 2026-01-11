@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections import deque
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Optional
@@ -26,9 +25,10 @@ class GoalWindowGateCallback(BaseCallback):
     - When an episode reaches the goal (info['goal_reached'] at least once), we
       count it as a success event for the current (start_state -> next_state)
       pair.
-    - If we observe `required_successes` goal-success episodes within the last
-      `window_episodes` ended episodes (global across all envs), we commit the
-      switch by writing `level_switch.json`.
+        - If we observe `required_successes` goal-success episodes total
+            (not necessarily consecutive; global across all envs), we either:
+                - stop training (if stop_training=True), or
+                - commit the switch by writing `level_switch.json`.
 
     This replaces the previous deterministic eval-env gate.
     """
@@ -37,14 +37,19 @@ class GoalWindowGateCallback(BaseCallback):
         self,
         *,
         shared_switch_path: str,
+        target_start_state: str = "",
         required_successes: int = 3,
         window_episodes: int = 10,
+        stop_training: bool = False,
         verbose: int = 0,
     ):
         super().__init__(verbose=verbose)
         self.shared_switch_path = str(shared_switch_path)
+        self.target_start_state = _normalize_state_name(target_start_state)
         self.required_successes = max(1, int(required_successes))
+        # Kept for backwards compatibility; no longer affects gating.
         self.window_episodes = max(1, int(window_episodes))
+        self.stop_training = bool(stop_training)
 
         self._episode_idx: int = 0
         self._per_env_goal_reached: Optional[list[bool]] = None
@@ -55,8 +60,8 @@ class GoalWindowGateCallback(BaseCallback):
         self._gate_start_state: str = ""
         self._gate_next_state: str = ""
 
-        # Episode indices where success occurred (global episode counter).
-        self._success_episodes: deque[int] = deque()
+        # Count of goal-success episodes for the active start->next pair.
+        self._success_count: int = 0
 
     def _init_callback(self) -> None:
         n_envs = int(getattr(self.training_env, "num_envs", 1))
@@ -95,17 +100,7 @@ class GoalWindowGateCallback(BaseCallback):
     def _reset_gate(self) -> None:
         self._gate_start_state = ""
         self._gate_next_state = ""
-        self._success_episodes.clear()
-
-    def _purge_old(self, *, cur_episode_idx: int) -> None:
-        # Keep only successes within the last `window_episodes` ended episodes.
-        # Example: window=10 -> accept successes where (cur - old) <= 10.
-        while self._success_episodes:
-            oldest = int(self._success_episodes[0])
-            if int(cur_episode_idx) - int(oldest) > int(self.window_episodes):
-                self._success_episodes.popleft()
-            else:
-                break
+        self._success_count = 0
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos")
@@ -121,7 +116,7 @@ class GoalWindowGateCallback(BaseCallback):
 
         # If a switch is already committed, do nothing.
         # (Wrappers will adopt it.)
-        if self._read_committed_next_state():
+        if (not self.stop_training) and self._read_committed_next_state():
             return True
 
         # Track goal reached within an episode.
@@ -169,6 +164,13 @@ class GoalWindowGateCallback(BaseCallback):
             if not start_state or not next_state:
                 continue
 
+            # Optional filter: only count successes from a specific
+            # start state.
+            if self.target_start_state and (
+                start_state != self.target_start_state
+            ):
+                continue
+
             # First success defines the gate target pair.
             if not self._gate_start_state or not self._gate_next_state:
                 self._gate_start_state = start_state
@@ -181,29 +183,41 @@ class GoalWindowGateCallback(BaseCallback):
             ):
                 continue
 
-            self._success_episodes.append(cur_ep)
-            self._purge_old(cur_episode_idx=cur_ep)
+            self._success_count += 1
 
             if self.verbose:
                 print(
                     "[goal-window-gate] success",
                     f"ep={cur_ep}",
                     "count=",
-                    len(self._success_episodes),
-                    "window=",
-                    self.window_episodes,
+                    int(self._success_count),
+                    "needed=",
+                    int(self.required_successes),
                     "from=",
                     self._gate_start_state,
                     "to=",
                     self._gate_next_state,
                 )
 
-            if len(self._success_episodes) >= int(self.required_successes):
+            if int(self._success_count) >= int(self.required_successes):
+                if self.stop_training:
+                    if self.verbose:
+                        print(
+                            "[goal-window-gate] stopping training:",
+                            (
+                                f"{self.required_successes} total successes"
+                            ),
+                            "from=",
+                            self._gate_start_state,
+                            "to=",
+                            self._gate_next_state,
+                        )
+                    return False
+
                 meta = {
                     "source": "GoalWindowGateCallback",
                     "from_state": self._gate_start_state,
                     "required_successes": int(self.required_successes),
-                    "window_episodes": int(self.window_episodes),
                     "episode_idx": int(cur_ep),
                 }
                 self._write_next_state(

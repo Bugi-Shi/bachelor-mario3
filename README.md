@@ -225,7 +225,7 @@ TensorBoard liest die Event-Files aus dem `tb/`-Ordner. Du kannst entweder einen
 
 ```bash
 # Beispiel: einen konkreten Run öffnen
-./project/bin/tensorboard --logdir outputs/runs/2025-12-13_12-34-56/tb --port 6006
+./project/bin/tensorboard --logdir outputs/runs/ --port 6006
 ```
 
 **2) Alle Runs zusammen anzeigen**
