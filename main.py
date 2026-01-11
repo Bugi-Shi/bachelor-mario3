@@ -13,14 +13,20 @@ def _parse_args() -> argparse.Namespace:
     hw = parser.add_mutually_exclusive_group()
     hw.add_argument(
         "--laptop",
-        action="store_true",
+        dest="profile",
+        action="store_const",
+        const="laptop",
         help="Use conservative training hyperparameters for laptops.",
     )
     hw.add_argument(
         "--pc",
-        action="store_true",
+        dest="profile",
+        action="store_const",
+        const="pc",
         help="Use faster training hyperparameters for PCs (more envs/batch).",
     )
+
+    parser.set_defaults(profile="pc")
 
     parser.add_argument(
         "--death",
@@ -56,7 +62,7 @@ def main() -> None:
         generate_death_artifacts(run_dir=run_dir)
         return
 
-    profile = "pc" if args.pc else "laptop"
+    profile = str(args.profile)
     print(f"Starte Mario PPO Training aus main.py (profile={profile}) ...")
     train_ppo(profile=profile)
     return

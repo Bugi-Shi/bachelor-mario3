@@ -42,27 +42,12 @@ sudo apt-get install -y capnproto libcapnp-dev libqt5opengl5-dev qtbase5-dev
 
 Ubuntu 22.04 bringt standardmäßig Python 3.10 mit. Für dieses Repo wird **Python 3.8** genutzt.
 
-Wenn `python3.8` bei dir schon verfügbar ist, brauchst du oft nur das venv-Modul:
-
 ```bash
 sudo apt update
 sudo apt-get install -y python3.8-venv python3.8-dev
 ```
 
-Falls Ubuntu die Pakete nicht findet (typisch auf 22.04 ohne Zusatz-Repos), nutze das deadsnakes PPA:
-
-```bash
-sudo apt-get install -y software-properties-common
-sudo add-apt-repository ppa:deadsnakes/ppa
-sudo apt update
-sudo apt-get install -y python3.8 python3.8-venv python3.8-dev
-```
-
-Wenn du Python 3.8 bereits anders installiert hast (z.B. `pyenv`), ist das auch ok – Hauptsache `python3.8` ist verfügbar.
-
----
-
-## Projekt installieren (virtuelle Umgebung)
+## Projekt installieren
 
 ### 1) Repo klonen
 
@@ -102,6 +87,7 @@ source project/bin/activate
 Hinweise:
 - `setup.sh` nutzt standardmäßig `python3.8` und installiert standardmäßig aus `requirements-lock.txt`.
 - Falls dein Python-Binary anders heißt, kannst du es setzen: `PYTHON_BIN=/pfad/zu/python3.8 ./setup.sh`
+- Die Installation des virtuellen Einvironment erfolg auch über "$PYTHON_BIN" -m venv "$VENV_DIR"
 
 ---
 
@@ -110,7 +96,7 @@ Hinweise:
 ### Was wird benutzt?
 
 - **gym-retro** liefert das Python-Modul `retro`.
-- Das Environment wird so gebaut, dass **nur** deine Custom-Integration verwendet wird (`CUSTOM_ONLY`).
+- Das Environment wird so gebaut, dass die Custom-Integration verwendet wird (`CUSTOM_ONLY`).
 - Der Pfad zur Custom-Integration ist im Training standardmäßig:
   - `retro_custom/` (siehe `custom_data_root` in `sandbox.py`).
 
